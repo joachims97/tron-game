@@ -1711,7 +1711,9 @@ class TronGame {
     // Show the score popup instead of auto-reloading
     setTimeout(() => {
       // Trigger the score popup in the parent app
-      if (window.showGameOverPopup) {
+      if (this.singlePlayerMode && window.showSinglePlayerGameOverPopup) {
+        window.showSinglePlayerGameOverPopup(reason);
+      } else if (window.showGameOverPopup) {
         window.showGameOverPopup(reason);
       }
     }, 1500); // Short delay to let the message be seen
