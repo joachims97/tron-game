@@ -524,10 +524,10 @@ function initializeGame(isFirstPlayer) {
   
   if (gameMode === 'single') {
     // Initialize game with the tron mechanics and AI mode
-    window.gameInstance = new game(
-      'game-canvas', 
+    window.gameInstance = new TronGame(
+      'game-canvas',
       true, // Always first player in single player mode
-      handleGameEvent, 
+      handleGameEvent,
       true, // Single player mode ON
       document.getElementById('difficulty-select')?.value || 'medium'
     );
@@ -697,21 +697,24 @@ function showGameOverPopup(reason) {
   
   // Show the popup
   popup.style.display = 'block';
-  
-  // Add event listeners to buttons
-  document.getElementById('play-again-btn').addEventListener('click', () => {
+
+  // Add event listeners to buttons using onclick to replace any existing handlers
+  const playAgainBtn = document.getElementById('play-again-btn');
+  const leaveGameBtn = document.getElementById('leave-game-btn');
+
+  playAgainBtn.onclick = () => {
     popup.style.display = 'none';
     restartGame();
-  });
-  
-  document.getElementById('leave-game-btn').addEventListener('click', () => {
+  };
+
+  leaveGameBtn.onclick = () => {
     popup.style.display = 'none';
     endGame();
     // Reset scores when leaving
     playerScore = 0;
     opponentScore = 0;
     gameCount = 0;
-  });
+  };
 }
 
 // Add this function to restart the game with the same players
@@ -758,7 +761,7 @@ document.getElementById('share-btn')?.addEventListener('click', () => {
 
 // Create debug button
 window.addEventListener('load', () => {
-  if (process.env.NODE_ENV !== 'production') {
+  if (typeof process !== 'undefined' && process.env.NODE_ENV !== 'production') {
     const debugButton = document.createElement('button');
     debugButton.textContent = "Force Position Update";
     debugButton.style.position = 'absolute';

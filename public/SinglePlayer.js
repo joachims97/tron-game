@@ -2,13 +2,11 @@
 // Use variables from app.js instead of redeclaring them
 // gameStarted is declared in app.js
 // soundEnabled is declared in app.js
-
-// Single player specific variables
-let gameInstance = null;
-let aiDifficulty = 'medium'; // default difficulty
-let playerScoreSP = 0; // Renamed to avoid conflict
-let aiScore = 0;
-let gameCountSP = 0; // Renamed to avoid conflict
+// gameInstance is declared in app.js
+// aiDifficulty is declared in app.js
+// playerScoreSP is declared in app.js
+// aiScore is declared in app.js
+// gameCountSP is declared in app.js
 
 // Initialize the single player mode
 function initSinglePlayer() {
@@ -187,21 +185,24 @@ function showSinglePlayerGameOverPopup(reason) {
   
   // Show the popup
   popup.style.display = 'block';
-  
-  // Add event listeners to buttons
-  document.getElementById('play-again-btn').addEventListener('click', () => {
+
+  // Add event listeners to buttons using onclick to replace any existing handlers
+  const playAgainBtn = document.getElementById('play-again-btn');
+  const backMenuBtn = document.getElementById('back-menu-btn');
+
+  playAgainBtn.onclick = () => {
     popup.style.display = 'none';
     restartGameSP();
-  });
-  
-  document.getElementById('back-menu-btn').addEventListener('click', () => {
+  };
+
+  backMenuBtn.onclick = () => {
     popup.style.display = 'none';
     endGameSP();
     // Reset scores when leaving
     playerScoreSP = 0;
     aiScore = 0;
     gameCountSP = 0;
-  });
+  };
 }
 
 // Restart the game - renamed to avoid conflicts
@@ -242,19 +243,6 @@ function endGameSP() {
   
   // Clear the game canvas
   document.getElementById('game-container').innerHTML = '<canvas id="game-canvas"></canvas><div id="game-message"></div>';
-}
-
- if (!gameInstance) {
-    console.log("No game instance found");
-    return;
-  }
-  
-  console.log("AI Debug Info:");
-  console.log(`AI Initialized: ${gameInstance.aiInitialized}`);
-  console.log(`AI Position: ${gameInstance.opponent?.node?.position?.x.toFixed(2)}, ${gameInstance.opponent?.node?.position?.z.toFixed(2)}`);
-  console.log(`AI Speed: ${gameInstance.opponent?.speed.toFixed(2)}`);
-  console.log(`AI Angle: ${gameInstance.opponent?.angle.toFixed(2)}`);
-  console.log(`AI State:`, gameInstance.aiState);
 }
 
 function debugAI() {

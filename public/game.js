@@ -60,9 +60,9 @@ class TronGame {
     this.lastAIDecision = 0;
     this.aiState = {
       targetAngle: 0,
+      targetHeading: 0,
       danger: false,
       jumpNeeded: false,
-      turnDirection: 0,
       lookAheadDistance: 0,
       dangerDirections: []
     };
@@ -940,53 +940,27 @@ class TronGame {
     switch (this.aiDifficulty) {
       case 'easy':
         this.aiParams = {
-          reactionTime: 300,       // ms to react to obstacles
+          reactionTime: 400,       // ms to react to obstacles
           lookAhead: 15,           // Units to look ahead for obstacles
-          jumpThreshold: 5,        // Distance at which AI will try to jump
-          errorRate: 0.2,          // Chance of making a mistake
-          turnRandomness: 0.3,     // Random turning behavior
+          errorRate: 0.3,          // Chance of making a mistake
           maxSpeed: this.MAX * 0.7 // Lower max speed
         };
         break;
-      case 'medium':
+      case 'normal':
         this.aiParams = {
-          reactionTime: 200,
-          lookAhead: 25,
-          jumpThreshold: 10,
+          reactionTime: 250,
+          lookAhead: 30,
           errorRate: 0.1,
-          turnRandomness: 0.15,
-          maxSpeed: this.MAX * 0.85
-        };
-        break;
-      case 'hard':
-        this.aiParams = {
-          reactionTime: 100,
-          lookAhead: 35,
-          jumpThreshold: 15,
-          errorRate: 0.05,
-          turnRandomness: 0.1,
-          maxSpeed: this.MAX * 1.0
-        };
-        break;
-      case 'impossible':
-        this.aiParams = {
-          reactionTime: 50,
-          lookAhead: 50,
-          jumpThreshold: 20,
-          errorRate: 0.02,
-          turnRandomness: 0.05,
-          maxSpeed: this.MAX * 1.1
+          maxSpeed: this.MAX * 0.9
         };
         break;
       default:
-        // Default to medium
+        // Default to normal
         this.aiParams = {
-          reactionTime: 200,
-          lookAhead: 25,
-          jumpThreshold: 10,
+          reactionTime: 250,
+          lookAhead: 30,
           errorRate: 0.1,
-          turnRandomness: 0.15, 
-          maxSpeed: this.MAX * 0.85
+          maxSpeed: this.MAX * 0.9
         };
     }
 
@@ -1003,7 +977,11 @@ class TronGame {
     if (!this.aiInitialized) {
       console.log("Initializing AI movement");
       this.opponent.speed = this.aiParams.maxSpeed * 0.5; // Start at half speed
-      this.aiState.turnDirection = 0; // Go straight initially
+      this.aiState.targetHeading = this.opponent.angle; // Initialize target heading
+
+      // Initialize with "go straight" pattern for the first 2 seconds
+      this.aiState.initialStraightTime = Date.now() + 2000;
+
       this.aiInitialized = true;
 
       // Force the opponent to move a bit to activate trail
@@ -1024,44 +1002,73 @@ class TronGame {
 
       // AI movement logic
       this.updateAIMovement();
-
-      // Occasionally make a jump (randomness factor)
-      if (!this.opponentPhysics.jumping && Math.random() < 0.01) {
-        this.handleOpponentJump();
-      }
     }
 
     // Add direct movement code here to ensure the opponent moves every frame
     // This is critical for making the AI move
     const dt = this.engine.getDeltaTime() / 900;
 
-    // Apply turning - clamp to valid range
-    const turnAmount = Math.max(-1, Math.min(1, this.aiState.turnDirection));
+    // NEW SYSTEM: Smooth interpolation toward target heading
+    // Calculate the shortest angular difference
+    let angleDiff = this.aiState.targetHeading - this.opponent.angle;
 
-    // Calculate target angle
-    const angleChange = turnAmount * this.TURN * 0.05;
-    this.opponent.angle += angleChange;
+    // Normalize to -PI to PI range
+    while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
+    while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
+
+    // Smooth turn toward target (lerp with speed-based factor)
+    // Turn faster when difference is large, slower when close
+    const turnSpeed = 1.0; // Responsiveness factor (reduced from 2.5 for smoother turns)
+    const maxTurnPerFrame = this.TURN * turnSpeed * dt;
+
+    if (Math.abs(angleDiff) > 0.01) { // Only turn if there's significant difference
+      const turnAmount = Math.max(-maxTurnPerFrame, Math.min(maxTurnPerFrame, angleDiff * 1.5));
+      this.opponent.angle += turnAmount;
+    }
 
     // Update position with current direction and speed
     this.opponent.node.rotation.y = -this.opponent.angle + Math.PI / 2;
 
-    // Adjust speed based on danger level
-    if (this.aiState.danger && this.aiState.dangerDirections.some(d => d.distance < 10)) {
-      // Slow down a bit in dangerous situations
-      this.opponent.speed = Math.max(this.MAX * 0.5, this.opponent.speed * 0.95);
+    // Adjust speed based on context - more nuanced speed changes
+    const targetSpeed = this.aiParams.maxSpeed;
+
+    // Calculate how sharp the turn is
+    const turnSharpness = Math.abs(angleDiff);
+
+    if (this.aiState.danger && this.aiState.dangerDirections.some(d => d.distance < 15)) {
+      // Slow down significantly in dangerous situations
+      const dangerSpeed = this.MAX * 0.4;
+      this.opponent.speed = Math.max(dangerSpeed, this.opponent.speed - this.ACC * dt * 2);
+    } else if (turnSharpness > 0.5) {
+      // Slow down when making sharp turns (>28 degrees)
+      const turnSpeed = this.MAX * 0.65;
+      if (this.opponent.speed > turnSpeed) {
+        this.opponent.speed -= this.ACC * dt * 1.5;
+      }
+    } else if (turnSharpness > 0.2) {
+      // Slow down slightly for moderate turns (>11 degrees)
+      const turnSpeed = this.MAX * 0.80;
+      if (this.opponent.speed > turnSpeed) {
+        this.opponent.speed -= this.ACC * dt * 0.5;
+      }
     } else {
-      // Accelerate to target speed
-      const targetSpeed = this.aiParams.maxSpeed;
-      this.opponent.speed = Math.min(targetSpeed, this.opponent.speed * 1.05);
+      // Accelerate smoothly to target speed when going straight
+      if (this.opponent.speed < targetSpeed) {
+        this.opponent.speed = Math.min(targetSpeed, this.opponent.speed + this.ACC * dt);
+      } else {
+        this.opponent.speed = Math.max(targetSpeed, this.opponent.speed - this.ACC * dt * 0.3);
+      }
     }
 
     // Apply changes to position (THIS IS THE CRITICAL LINE FOR MOVEMENT)
     const movement = this.direction(this.opponent.angle).scale(this.opponent.speed * dt);
     this.opponent.node.position.addInPlace(movement);
 
-    // Calculate opponent roll angle based on turn direction
+    // Calculate opponent roll angle based on turn sharpness
     if (this.opponent.modelNode) {
-      const opponentTargetRoll = turnAmount * this.ROLL_MAX;
+      // Roll based on angular difference (normalized)
+      const rollAmount = Math.max(-1, Math.min(1, angleDiff * 2));
+      const opponentTargetRoll = rollAmount * this.ROLL_MAX;
 
       // Smoothly interpolate opponent roll
       this.opponentPhysics.rollAngle = BABYLON.Scalar.Lerp(
@@ -1075,8 +1082,13 @@ class TronGame {
     }
 
     // Debug log occasionally
-    if (Math.random() < 0.01) {
-      console.log(`AI: pos(${this.opponent.node.position.x.toFixed(2)}, ${this.opponent.node.position.z.toFixed(2)}), spd: ${this.opponent.speed.toFixed(2)}`);
+    if (Math.random() < 0.02) {
+      const currentHeading = (this.opponent.angle * 180 / Math.PI).toFixed(0);
+      const targetHeadingDeg = (this.aiState.targetHeading * 180 / Math.PI).toFixed(0);
+      const angleDiff = this.aiState.targetHeading - this.opponent.angle;
+      console.log(`AI: pos(${this.opponent.node.position.x.toFixed(1)}, ${this.opponent.node.position.z.toFixed(1)}), ` +
+                  `heading: ${currentHeading}° → target: ${targetHeadingDeg}° (diff: ${(angleDiff * 180 / Math.PI).toFixed(1)}°), ` +
+                  `spd: ${this.opponent.speed.toFixed(1)}`);
     }
   }
   
@@ -1086,91 +1098,230 @@ class TronGame {
     // Get opponent position
     const position = this.opponent.node.position.clone();
 
-    // Look in various directions for obstacles
-    const lookDirections = 16; // Number of directions to check
-    const lookDistance = this.aiParams.lookAhead; // How far to look
+    // All difficulties use the new target heading system
+    this.updateAIMovementNormal(position);
+  }
 
-    // Direction vectors for checking
-    for (let i = 0; i < lookDirections; i++) {
-      const angle = (Math.PI * 2 * i) / lookDirections;
-      const direction = new BABYLON.Vector3(
-        Math.cos(angle), 
-        0, 
-        Math.sin(angle)
-      );
+  // Human-like AI behavior for normal difficulty
+  updateAIMovementNormal(position) {
+    // Initialize state tracking if not exists
+    if (!this.aiState.normalState) {
+      this.aiState.normalState = {
+        lastDirectionChange: Date.now(),
+        currentPattern: 'explore',
+        turnDuration: 0,
+        explorationTarget: this.opponent.angle
+      };
+    }
 
-      // Create a ray from opponent position in the check direction
-      const ray = new BABYLON.Ray(
-        position.clone(), 
-        direction, 
-        lookDistance
-      );
+    const normalState = this.aiState.normalState;
+    const currentDir = this.direction(this.opponent.angle);
+    const lookDistance = this.aiParams.lookAhead;
 
-      // Don't hit opponent's own node
+    // PREDICTIVE WALL COLLISION - Check if current trajectory will hit wall
+    const projectionTime = 2.0;
+    const projectedDistance = this.opponent.speed * projectionTime;
+    const projectedPos = position.clone().add(currentDir.scale(projectedDistance));
+
+    const wallMargin = 50;
+    const willHitWall = Math.abs(projectedPos.x) > (this.ARENA / 2 - wallMargin) ||
+                        Math.abs(projectedPos.z) > (this.ARENA / 2 - wallMargin);
+
+    // Check for immediate obstacles in front and sides (like a human would see)
+    const checkAngles = [-Math.PI/3, -Math.PI/6, 0, Math.PI/6, Math.PI/3]; // Left, half-left, front, half-right, right
+    let frontDanger = false;
+    let leftDanger = false;
+    let rightDanger = false;
+    let closestObstacle = Infinity;
+
+    // Also check ahead for player trail to anticipate jumps
+    const jumpLookAhead = 35; // Look further ahead for jump opportunities
+    let playerTrailAhead = false;
+    let playerTrailDistance = Infinity;
+
+    for (let i = 0; i < checkAngles.length; i++) {
+      const checkAngle = this.opponent.angle + checkAngles[i];
+      const direction = new BABYLON.Vector3(Math.cos(checkAngle), 0, Math.sin(checkAngle));
+
+      // Check at normal distance for obstacles
+      const ray = new BABYLON.Ray(position.clone(), direction, lookDistance);
       const predicate = (mesh) => {
-        return mesh !== this.opponent.node && 
+        return mesh !== this.opponent.node &&
                mesh !== this.opponent.placeholder &&
                mesh !== this.opponent.trail;
       };
 
-      // Check for hit
       const hit = this.scene.pickWithRay(ray, predicate);
 
       if (hit.hit) {
-        // Found an obstacle in this direction
         this.aiState.danger = true;
-        this.aiState.dangerDirections.push({
-          direction: direction,
-          distance: hit.distance,
-          angle: angle
-        });
+        closestObstacle = Math.min(closestObstacle, hit.distance);
 
-        // Decide if we need to jump (if the obstacle is the player's trail)
-        if (hit.pickedMesh === this.player.trail && 
-            hit.distance < this.aiParams.jumpThreshold && 
-            Math.random() > this.aiParams.errorRate) {
-          this.aiState.jumpNeeded = true;
+        if (i === 2) frontDanger = true; // Front
+        if (i < 2) leftDanger = true; // Left side
+        if (i > 2) rightDanger = true; // Right side
+      }
+
+      // Check further ahead specifically for player trail to anticipate jumps
+      if (i === 2) { // Only check straight ahead for jumps
+        const jumpRay = new BABYLON.Ray(position.clone(), direction, jumpLookAhead);
+        const jumpHit = this.scene.pickWithRay(jumpRay, predicate);
+
+        if (jumpHit.hit && jumpHit.pickedMesh === this.player.trail) {
+          playerTrailAhead = true;
+          playerTrailDistance = jumpHit.distance;
         }
       }
     }
 
-    // Check for boundary proximity
-    if (Math.abs(position.x) > this.ARENA / 2 - lookDistance ||
-        Math.abs(position.z) > this.ARENA / 2 - lookDistance) {
-      this.aiState.danger = true;
+    // Anticipatory jumping logic - jump when player trail is ahead
+    if (playerTrailAhead && !this.opponentPhysics.jumping) {
+      // Jump earlier based on speed and distance
+      const timeToCollision = playerTrailDistance / this.opponent.speed;
 
-      // Add boundary as a danger direction
-      const toCenter = new BABYLON.Vector3(0, 0, 0).subtract(position).normalize();
-      this.aiState.dangerDirections.push({
-        direction: toCenter.scale(-1), // Away from center is danger
-        distance: Math.min(
-          this.ARENA / 2 - Math.abs(position.x),
-          this.ARENA / 2 - Math.abs(position.z)
-        ),
-        angle: Math.atan2(toCenter.z, toCenter.x)
-      });
+      // Jump if collision within 0.8-1.2 seconds (gives time to jump over)
+      if (timeToCollision < 1.2 && timeToCollision > 0.3) {
+        this.aiState.jumpNeeded = true;
+      }
     }
 
-    // Determine best direction to turn if in danger
-    if (this.aiState.danger) {
-      this.calculateAISafeDirection();
-    } else {
-      // No immediate danger, add some randomness to movement
-      if (Math.random() < this.aiParams.turnRandomness) {
-        this.aiState.turnDirection = Math.random() > 0.5 ? 1 : -1;
-      } else {
-        // Consider moving toward player for more aggressive AI
-        if (this.aiDifficulty === 'hard' || this.aiDifficulty === 'impossible') {
-          const toPlayer = this.player.node.position.subtract(position).normalize();
-          const currentDir = this.direction(this.opponent.angle);
-          const dot = BABYLON.Vector3.Dot(toPlayer, currentDir);
+    // Detect player proximity (evasion behavior)
+    const playerPos = this.player.node.position;
+    const distanceToPlayer = BABYLON.Vector3.Distance(position, playerPos);
+    const playerDir = playerPos.subtract(position).normalize();
+    const playerDot = BABYLON.Vector3.Dot(currentDir, playerDir);
 
-          // If player is ahead, try to move toward them
-          if (dot > 0.7) {
-            const cross = BABYLON.Vector3.Cross(currentDir, toPlayer);
-            this.aiState.turnDirection = Math.sign(cross.y) * 0.2;
-          }
+    // Check if player is nearby (within visual range)
+    const playerNearby = distanceToPlayer < 80;
+    const playerAhead = playerDot > 0.3; // Player is somewhat ahead
+    const playerBehind = playerDot < -0.3; // Player is behind
+
+    // Detect if player is approaching (getting closer)
+    if (!this.aiState.lastPlayerDistance) {
+      this.aiState.lastPlayerDistance = distanceToPlayer;
+    }
+    const playerApproaching = distanceToPlayer < this.aiState.lastPlayerDistance - 2;
+    this.aiState.lastPlayerDistance = distanceToPlayer;
+
+    // Check boundaries with much larger margin
+    // Decision making (human-like behavior)
+    const now = Date.now();
+    const timeSinceLastChange = now - normalState.lastDirectionChange;
+
+    // Helper function to calculate heading toward a direction vector
+    const calculateHeading = (directionVector) => {
+      return Math.atan2(directionVector.z, directionVector.x);
+    };
+
+    // INITIAL PHASE: Go straight for the first 5-8 seconds
+    if (this.aiState.initialStraightTime && now < this.aiState.initialStraightTime) {
+      // Only avoid walls during initial phase, otherwise go straight
+      if (willHitWall) {
+        // Turn toward center
+        const toCenter = new BABYLON.Vector3(0, 0, 0).subtract(position).normalize();
+        this.aiState.targetHeading = calculateHeading(toCenter);
+      } else {
+        // Keep going straight
+        this.aiState.targetHeading = this.opponent.angle;
+      }
+
+      // Still handle jumps during initial phase
+      if (this.aiState.jumpNeeded && !this.opponentPhysics.jumping) {
+        this.handleOpponentJump();
+      }
+
+      return; // Skip rest of decision making during initial phase
+    }
+
+    // PRIORITY 1: Predictive wall avoidance - HIGHEST PRIORITY
+    if (willHitWall) {
+      // Only set a new target if we're not already evading walls
+      // This prevents constantly resetting the target with new random offsets
+      if (normalState.currentPattern !== 'evade-wall' || timeSinceLastChange > 1500) {
+        // Calculate heading toward center
+        const toCenter = new BABYLON.Vector3(0, 0, 0).subtract(position).normalize();
+        const centerHeading = calculateHeading(toCenter);
+
+        // Add slight randomness for natural behavior (±10 degrees)
+        const randomOffset = (Math.random() - 0.5) * 0.35;
+        this.aiState.targetHeading = centerHeading + randomOffset;
+
+        normalState.currentPattern = 'evade-wall';
+        normalState.lastDirectionChange = now;
+      }
+    }
+    // PRIORITY 2: Avoid immediate obstacles
+    else if (frontDanger && closestObstacle < 25) {
+      // Only set a new target if we're not already evading obstacles
+      if (normalState.currentPattern !== 'evade-obstacle' || timeSinceLastChange > 1000) {
+        // Turn away from obstacles - pick the clearer side
+        if (leftDanger && !rightDanger) {
+          // Turn right (clockwise)
+          this.aiState.targetHeading = this.opponent.angle - Math.PI / 3; // 60° right
+        } else if (rightDanger && !leftDanger) {
+          // Turn left (counter-clockwise)
+          this.aiState.targetHeading = this.opponent.angle + Math.PI / 3; // 60° left
+        } else {
+          // Both sides blocked - make a sharp turn randomly
+          const turnDirection = Math.random() > 0.5 ? 1 : -1;
+          this.aiState.targetHeading = this.opponent.angle + (turnDirection * Math.PI / 2);
         }
+
+        // Add slight randomness (±15 degrees)
+        this.aiState.targetHeading += (Math.random() - 0.5) * 0.52;
+
+        normalState.currentPattern = 'evade-obstacle';
+        normalState.lastDirectionChange = now;
+      }
+    }
+    // PRIORITY 3: Evade player when nearby and approaching
+    else if (playerNearby && playerApproaching && playerAhead) {
+      // Only set a new target if we're not already evading player
+      if (normalState.currentPattern !== 'evade-player' || timeSinceLastChange > 1000) {
+        // Calculate perpendicular direction to player
+        const perpVector = new BABYLON.Vector3(-playerDir.z, 0, playerDir.x); // 90° rotation
+        const cross = BABYLON.Vector3.Cross(currentDir, playerDir);
+
+        // Choose which perpendicular direction to use
+        if (Math.sign(cross.y) < 0) {
+          perpVector.scaleInPlace(-1); // Use the other perpendicular
+        }
+
+        const evadeHeading = calculateHeading(perpVector);
+        this.aiState.targetHeading = evadeHeading + (Math.random() - 0.5) * 0.3;
+
+        normalState.currentPattern = 'evade-player';
+        normalState.lastDirectionChange = now;
+      }
+    }
+    // PRIORITY 4: Random exploration and pattern changes (human-like wandering)
+    else {
+      // Default: maintain current heading
+      if (!normalState.explorationTarget) {
+        normalState.explorationTarget = this.opponent.angle;
+      }
+      this.aiState.targetHeading = normalState.explorationTarget;
+
+      // Change direction every 3 seconds for variety
+      if (timeSinceLastChange > 3000) {
+        // Time to make a new decision
+        const rand = Math.random();
+
+        if (rand < 0.5) {
+          // Go straight - keep current heading
+          normalState.explorationTarget = this.opponent.angle;
+        } else if (rand < 0.85) {
+          // Make a gentle turn (±30 degrees)
+          const turnAmount = (Math.random() - 0.5) * 1.05;
+          normalState.explorationTarget = this.opponent.angle + turnAmount;
+        } else {
+          // Occasional sharper turn (±60 degrees)
+          const turnAmount = (Math.random() - 0.5) * 2.09;
+          normalState.explorationTarget = this.opponent.angle + turnAmount;
+        }
+
+        this.aiState.targetHeading = normalState.explorationTarget;
+        normalState.lastDirectionChange = now;
       }
     }
 
@@ -1180,91 +1331,7 @@ class TronGame {
     }
   }
 
-  // Calculate the safest direction for AI to turn
-  calculateAISafeDirection() {
-    // Start with current direction
-    const currentDir = this.direction(this.opponent.angle);
 
-    // Find the most dangerous directions (closest obstacles)
-    let mostDangerousDir = null;
-    let shortestDistance = Infinity;
-
-    for (const danger of this.aiState.dangerDirections) {
-      if (danger.distance < shortestDistance) {
-        shortestDistance = danger.distance;
-        mostDangerousDir = danger.direction;
-      }
-    }
-
-    if (mostDangerousDir) {
-      // Calculate the dot product to see if we're heading toward danger
-      const dot = BABYLON.Vector3.Dot(currentDir, mostDangerousDir);
-
-      if (dot > 0.5) { // We're heading toward danger
-        // Find best escape direction (orthogonal to danger)
-        const cross = BABYLON.Vector3.Cross(currentDir, mostDangerousDir);
-
-        // Determine if we should turn left or right
-        // With some randomness to avoid predictability
-        if (Math.abs(cross.y) < 0.2) {
-          // Almost parallel with danger, pick a side with slight randomness
-          this.aiState.turnDirection = (Math.random() > 0.5 ? 1 : -1);
-        } else {
-          // Turn in the direction of the cross product (with some randomness)
-          const randomFactor = (Math.random() * 0.4) - 0.2; // -0.2 to 0.2
-          this.aiState.turnDirection = Math.sign(cross.y) + randomFactor;
-        }
-
-        // Increase turn rate if danger is very close
-        if (shortestDistance < this.aiParams.jumpThreshold / 2) {
-          this.aiState.turnDirection *= 1.5;
-        }
-      }
-    }
-  }
-
-  // Apply the AI decisions to the opponent bike
-  applyAIDecisions() {
-    // Apply turning - clamp to valid range
-    const turnAmount = Math.max(-1, Math.min(1, this.aiState.turnDirection));
-
-    // Calculate target angle
-    const angleChange = turnAmount * this.TURN * 0.05;
-    this.opponent.angle += angleChange;
-
-    // Update position with current direction and speed
-    this.opponent.node.rotation.y = -this.opponent.angle + Math.PI / 2;
-
-    // Adjust speed based on danger level
-    if (this.aiState.danger && this.aiState.dangerDirections.some(d => d.distance < 10)) {
-      // Slow down a bit in dangerous situations
-      this.opponent.speed = Math.max(this.MAX * 0.5, this.opponent.speed * 0.95);
-    } else {
-      // Accelerate to target speed
-      const targetSpeed = this.aiParams.maxSpeed;
-      this.opponent.speed = Math.min(targetSpeed, this.opponent.speed * 1.05);
-    }
-
-    // Apply changes to position
-    const dt = this.engine.getDeltaTime() / 900;
-    const movement = this.direction(this.opponent.angle).scale(this.opponent.speed * dt);
-    this.opponent.node.position.addInPlace(movement);
-
-    // Calculate opponent roll angle based on turn direction
-    if (this.opponent.modelNode) {
-      const opponentTargetRoll = turnAmount * this.ROLL_MAX;
-
-      // Smoothly interpolate opponent roll
-      this.opponentPhysics.rollAngle = BABYLON.Scalar.Lerp(
-        this.opponentPhysics.rollAngle,
-        opponentTargetRoll,
-        dt * this.ROLL_SPEED
-      );
-
-      // Apply roll to opponent model
-      this.opponent.modelNode.rotation.z = this.opponentPhysics.rollAngle;
-    }
-  }
 
   update() {
     if (this.gameOver) return;
@@ -1438,14 +1505,7 @@ class TronGame {
     // Handle opponent updates based on game mode
     if (this.singlePlayerMode) {
       // In single player mode, AI controls the opponent
-      // AI updates happen in the updateAI method, called separately
-
-      // Check if AI needs to be updated this frame
-      const now = Date.now();
-      if (now - this.lastAIDecision > this.aiUpdateInterval) {
-        this.updateAI();
-        this.lastAIDecision = now;
-      }
+      // AI updates already happen in updateAI() called at the top of update()
 
       // Check opponent boundary collisions for AI
       if (this.checkBoundaryCollision(this.opponent)) {
@@ -1711,7 +1771,9 @@ class TronGame {
     // Show the score popup instead of auto-reloading
     setTimeout(() => {
       // Trigger the score popup in the parent app
-      if (window.showGameOverPopup) {
+      if (this.singlePlayerMode && window.showSinglePlayerGameOverPopup) {
+        window.showSinglePlayerGameOverPopup(reason);
+      } else if (window.showGameOverPopup) {
         window.showGameOverPopup(reason);
       }
     }, 1500); // Short delay to let the message be seen
