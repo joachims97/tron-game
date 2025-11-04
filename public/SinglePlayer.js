@@ -38,11 +38,14 @@ function initSinglePlayer() {
 function startSinglePlayerGame() {
   console.log(`Starting single player game with ${aiDifficulty} difficulty`);
   gameStarted = true; // Using global variable from app.js
-  
+
   // Hide menu UI, show game canvas
   document.getElementById('single-player-menu').style.display = 'none';
   document.getElementById('game-container').style.display = 'block';
-  
+
+  // Add game-active class to body for mobile fullscreen
+  document.body.classList.add('game-active');
+
   // Initialize game with single player settings
   // First player is always the human player (blue)
   initializeGameSP(true);
@@ -107,21 +110,30 @@ function resizeGameCanvas(canvas) {
 // Handle game events - renamed to avoid conflicts
 function handleGameEventSP(data) {
   console.log('Game event:', data);
-  
+
   if (data.type === 'gameover') {
-    // Handle game over event
+    // Handle game over event with a delay to let the "Game Over" message be seen
     let reason = data.reason || '';
-    showSinglePlayerGameOverPopup(reason);
+    setTimeout(() => {
+      showSinglePlayerGameOverPopup(reason);
+    }, 1500);
   }
 }
 
 // Show game over popup for single player
 function showSinglePlayerGameOverPopup(reason) {
   console.log("Showing game over popup, reason:", reason);
-  
+
+  // Check if popup is already visible - prevent duplicate calls
+  let popup = document.getElementById('game-over-popup');
+  if (popup && popup.style.display === 'block') {
+    console.log("Popup already visible, ignoring duplicate call");
+    return;
+  }
+
   // First, check if the user won or lost based on the reason
   let playerWon = reason.startsWith('opponent');
-  
+
   // Update scores
   if (playerWon) {
     playerScoreSP++;
@@ -129,9 +141,8 @@ function showSinglePlayerGameOverPopup(reason) {
     aiScore++;
   }
   gameCountSP++;
-  
+
   // Create the popup container if it doesn't exist
-  let popup = document.getElementById('game-over-popup');
   if (!popup) {
     popup = document.createElement('div');
     popup.id = 'game-over-popup';
@@ -186,23 +197,33 @@ function showSinglePlayerGameOverPopup(reason) {
   // Show the popup
   popup.style.display = 'block';
 
-  // Add event listeners to buttons using onclick to replace any existing handlers
-  const playAgainBtn = document.getElementById('play-again-btn');
-  const backMenuBtn = document.getElementById('back-menu-btn');
+  // Use setTimeout to ensure the popup is rendered before adding event listeners
+  // This prevents race conditions where buttons might not exist yet
+  setTimeout(() => {
+    const playAgainBtn = document.getElementById('play-again-btn');
+    const backMenuBtn = document.getElementById('back-menu-btn');
 
-  playAgainBtn.onclick = () => {
-    popup.style.display = 'none';
-    restartGameSP();
-  };
+    // Use onclick to replace any existing handlers (not addEventListener)
+    if (playAgainBtn) {
+      playAgainBtn.onclick = (e) => {
+        e.stopPropagation(); // Prevent event bubbling
+        popup.style.display = 'none';
+        restartGameSP();
+      };
+    }
 
-  backMenuBtn.onclick = () => {
-    popup.style.display = 'none';
-    endGameSP();
-    // Reset scores when leaving
-    playerScoreSP = 0;
-    aiScore = 0;
-    gameCountSP = 0;
-  };
+    if (backMenuBtn) {
+      backMenuBtn.onclick = (e) => {
+        e.stopPropagation(); // Prevent event bubbling
+        popup.style.display = 'none';
+        endGameSP();
+        // Reset scores when leaving
+        playerScoreSP = 0;
+        aiScore = 0;
+        gameCountSP = 0;
+      };
+    }
+  }, 0);
 }
 
 // Restart the game - renamed to avoid conflicts
@@ -241,7 +262,10 @@ function endGameSP() {
     }
     gameInstance = null;
   }
-  
+
+  // Remove game-active class from body
+  document.body.classList.remove('game-active');
+
   document.getElementById('game-container').style.display = 'none';
   document.getElementById('main-menu').style.display = 'block';
   
@@ -267,7 +291,12 @@ function debugAI() {
 // Expose necessary functions to global scope
 window.initSinglePlayer = initSinglePlayer;
 window.startSinglePlayerGame = startSinglePlayerGame;
+window.initializeGameSP = initializeGameSP;
+window.resizeGameCanvas = resizeGameCanvas;
+window.handleGameEventSP = handleGameEventSP;
 window.showSinglePlayerGameOverPopup = showSinglePlayerGameOverPopup;
+window.restartGameSP = restartGameSP;
+window.endGameSP = endGameSP;
 window.debugAIUpdate = debugAIUpdate;
 window.debugAI = debugAI;
 

@@ -2,12 +2,18 @@
 class TronGame {
   constructor(canvasId, isFirstPlayer, sendDataCallback, singlePlayerMode = false, aiDifficulty = 'medium') {
     // Configuration
-    this.ARENA = 600;
-    this.MAX = 50;
-    this.ACC = 30;
+    this.ARENA = 1200; // Doubled arena size for more playing space
+    this.MAX = 150; // Increased by 50% for even more intense gameplay
+    this.ACC = 90;  // Increased acceleration to match the faster speed
+    this.CRUISE_SPEED = 30; // Default cruising speed (bikes drift toward this when not accelerating)
+    this.DECEL = 15; // Passive deceleration rate when coasting
     this.TURN = Math.PI / 2;
     this.TRAIL_MAX = 400; // Adjusted to match playground
     this.HIT_SQ = 9;
+
+    // Camera settings
+    this.CAMERA_MIN_RADIUS = 30; // Camera distance at low speed
+    this.CAMERA_MAX_RADIUS = 100; // Camera distance at max speed (increased for larger arena)
     
     // Physics parameters
     this.ROLL_MAX = Math.PI / 6; // Maximum roll angle (30 degrees)
@@ -121,20 +127,38 @@ class TronGame {
   start() {
     // Get canvas and initialize engine
     const canvas = document.getElementById(this.canvasId);
-    // Explicitly set the canvas element's width and height (important for rendering quality)
-    const desiredResolution = Math.min(800, Math.min(window.innerWidth, window.innerHeight));
+
+    // Set canvas size based on device type
+    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+    let desiredResolution;
+
+    if (isMobile) {
+      // Mobile: use full viewport (no 800px limit)
+      desiredResolution = Math.min(window.innerWidth, window.innerHeight);
+    } else {
+      // Desktop: limit to 800px
+      desiredResolution = Math.min(800, Math.min(window.innerWidth, window.innerHeight));
+    }
+
     canvas.width = desiredResolution;
     canvas.height = desiredResolution;
 
-    this.engine = new BABYLON.Engine(canvas, true, { 
-      preserveDrawingBuffer: true, 
+    this.engine = new BABYLON.Engine(canvas, true, {
+      preserveDrawingBuffer: true,
       stencil: true,
       disableWebGL2Support: false,
       adaptToDeviceRatio: true
     });
-    
+
     window.addEventListener('resize', () => {
-      const newSize = Math.min(800, Math.min(window.innerWidth, window.innerHeight));
+      let newSize;
+      if (isMobile) {
+        // Mobile: use full viewport
+        newSize = Math.min(window.innerWidth, window.innerHeight);
+      } else {
+        // Desktop: limit to 800px
+        newSize = Math.min(800, Math.min(window.innerWidth, window.innerHeight));
+      }
       canvas.width = newSize;
       canvas.height = newSize;
       this.engine.resize();
@@ -142,7 +166,19 @@ class TronGame {
     
     // Create the scene first - THIS IS THE KEY FIX
     this.scene = new BABYLON.Scene(this.engine);
-    
+
+    // Set dark background color for Tron aesthetic
+    this.scene.clearColor = new BABYLON.Color4(0.05, 0.05, 0.08, 1.0);
+
+    // Create skybox with dark grey clouds
+    this.skybox = BABYLON.MeshBuilder.CreateBox("skyBox", {size: 2500}, this.scene);
+    const skyboxMaterial = new BABYLON.StandardMaterial("skyBoxMat", this.scene);
+    skyboxMaterial.backFaceCulling = false;
+    skyboxMaterial.disableLighting = true;
+    skyboxMaterial.emissiveColor = new BABYLON.Color3(0.1, 0.1, 0.12); // Dark grey
+    this.skybox.material = skyboxMaterial;
+    this.skybox.infiniteDistance = true;
+
     // Set up lighting - just one basic light
     new BABYLON.HemisphericLight('L', new BABYLON.Vector3(0, 1, 0), this.scene)
       .intensity = 0.6; // Match playground intensity
@@ -211,6 +247,9 @@ class TronGame {
     this.loadCycleModel();
     this.loadGridModel();
 
+    // Create arena walls
+    this.createArenaWalls();
+
     // Start game loop
     this.engine.runRenderLoop(() => this.update());
     window.addEventListener('resize', () => this.engine.resize());
@@ -243,14 +282,15 @@ class TronGame {
     // Create container for mobile controls
     const controlsContainer = document.createElement('div');
     controlsContainer.id = 'mobile-controls';
-    controlsContainer.style.position = 'absolute';
-    controlsContainer.style.bottom = '-100px';
+    controlsContainer.style.position = 'fixed';
+    controlsContainer.style.bottom = '20px';
     controlsContainer.style.left = '0';
     controlsContainer.style.width = '100%';
-    controlsContainer.style.height = '250px';
+    controlsContainer.style.height = '200px';
     controlsContainer.style.display = 'flex';
     controlsContainer.style.justifyContent = 'space-between';
     controlsContainer.style.pointerEvents = 'none';
+    controlsContainer.style.zIndex = '1000'; // Ensure it's above the canvas
     document.body.appendChild(controlsContainer);
 
     // Create virtual joystick container
@@ -332,34 +372,16 @@ class TronGame {
       jumpButtonElem.style.backgroundColor = 'rgba(0, 180, 255, 0.5)';
     });
 
-    // Add debug info
-    const debugInfo = document.createElement('div');
-    debugInfo.id = 'joystick-debug';
-    debugInfo.style.position = 'absolute';
-    debugInfo.style.top = '10px';
-    debugInfo.style.left = '10px';
-    debugInfo.style.color = 'white';
-    debugInfo.style.backgroundColor = 'rgba(0,0,0,0.5)';
-    debugInfo.style.padding = '5px';
-    debugInfo.style.fontSize = '12px';
-    debugInfo.style.zIndex = '1000';
-    debugInfo.textContent = 'Touch: waiting...';
-    document.body.appendChild(debugInfo);
-
-    // Set up joystick container touch events with verbose debugging
+    // Set up joystick container touch events
     joystickContainer.addEventListener('touchstart', (e) => {
       e.preventDefault();
       this.touchControls.active = true;
-      console.log("Touch started on joystick");
-      debugInfo.textContent = "Touch started";
       this.updateJoystickPosition(e.touches[0]);
     });
 
     joystickContainer.addEventListener('touchmove', (e) => {
       e.preventDefault();
       if (this.touchControls.active) {
-        console.log("Touch moved on joystick");
-        debugInfo.textContent = `Move: ${e.touches[0].clientX},${e.touches[0].clientY}`;
         this.updateJoystickPosition(e.touches[0]);
       }
     });
@@ -370,8 +392,6 @@ class TronGame {
       this.touchControls.turnValue = 0;
       this.touchControls.accelerateValue = 0;
       joystickThumb.style.transform = 'translate(-50%, -50%)';
-      console.log("Touch ended on joystick");
-      debugInfo.textContent = "Touch ended";
     };
 
     joystickContainer.addEventListener('touchend', endTouch);
@@ -380,16 +400,14 @@ class TronGame {
     console.log("Mobile controls setup complete");
   }
 
-  // Completely rewritten update method with better debugging
+  // Update joystick position based on touch input
   updateJoystickPosition(touch) {
     if (!this.joystickThumb) {
-      console.error("Joystick thumb not found!");
       return;
     }
 
     const joystickContainer = document.getElementById('joystick-container');
     if (!joystickContainer) {
-      console.error("Joystick container not found!");
       return;
     }
 
@@ -400,11 +418,6 @@ class TronGame {
     // Calculate distance from center
     const deltaX = touch.clientX - centerX;
     const deltaY = touch.clientY - centerY;
-
-    // Log these values to verify calculations
-    console.log(`Touch at: ${touch.clientX}, ${touch.clientY}`);
-    console.log(`Joystick center at: ${centerX}, ${centerY}`);
-    console.log(`Delta: ${deltaX}, ${deltaY}`);
 
     const maxDistance = 50;  // Half of joystick base radius
 
@@ -423,20 +436,13 @@ class TronGame {
     const thumbX = dx * maxDistance;
     const thumbY = dy * maxDistance;
 
-    // Update joystick visual - log the transform that will be applied
+    // Update joystick visual
     const transform = `translate(calc(-50% + ${thumbX}px), calc(-50% + ${thumbY}px))`;
-    console.log(`Setting transform: ${transform}`);
     this.joystickThumb.style.transform = transform;
 
     // Update joystick values for game control
     this.touchControls.turnValue = -dx;
     this.touchControls.accelerateValue = dy;
-
-    // Update debug info
-    const debugInfo = document.getElementById('joystick-debug');
-    if (debugInfo) {
-      debugInfo.textContent = `Touch: ${Math.round(dx*100)/100}, ${Math.round(dy*100)/100}`;
-    }
   }
 
   // Add method to handle window resize
@@ -489,9 +495,10 @@ class TronGame {
         }
       });
 
-      // Adjust camera for better mobile view
+      // Adjust camera ranges for better mobile view (wider range for mobile)
       if (this.camera) {
-        this.camera.radius = 40;
+        this.CAMERA_MIN_RADIUS = 40;
+        this.CAMERA_MAX_RADIUS = 80;
         this.camera.heightOffset = 12;
       }
 
@@ -965,6 +972,117 @@ class TronGame {
     });
   }
 
+  createArenaWalls() {
+    console.log("Creating arena walls");
+
+    const wallHeight = 20;
+    const wallThickness = 4;
+    const arenaSize = this.ARENA;
+
+    // Create wall material - black with blue emissive highlights
+    const wallMaterial = new BABYLON.StandardMaterial('wallMat', this.scene);
+    wallMaterial.diffuseColor = new BABYLON.Color3(0.05, 0.05, 0.05); // Very dark gray (almost black)
+    wallMaterial.emissiveColor = new BABYLON.Color3(0, 0.3, 0.5); // Dark blue emissive glow
+    wallMaterial.specularColor = new BABYLON.Color3(0, 0.5, 1.0); // Brighter blue specular
+    wallMaterial.specularPower = 32;
+
+    // Create edge highlight material - brighter blue
+    const edgeMaterial = new BABYLON.StandardMaterial('edgeMat', this.scene);
+    edgeMaterial.diffuseColor = BABYLON.Color3.Black();
+    edgeMaterial.emissiveColor = new BABYLON.Color3(0, 0.7, 1.0); // Bright Tron blue
+    edgeMaterial.specularColor = BABYLON.Color3.Black();
+
+    // North wall (positive Z)
+    const northWall = BABYLON.MeshBuilder.CreateBox('northWall', {
+      width: arenaSize + wallThickness * 2,
+      height: wallHeight,
+      depth: wallThickness
+    }, this.scene);
+    northWall.position.z = arenaSize / 2 + wallThickness / 2;
+    northWall.position.y = wallHeight / 2;
+    northWall.material = wallMaterial;
+
+    // North wall top edge
+    const northEdge = BABYLON.MeshBuilder.CreateBox('northEdge', {
+      width: arenaSize + wallThickness * 2,
+      height: 0.5,
+      depth: wallThickness + 0.5
+    }, this.scene);
+    northEdge.position.z = arenaSize / 2 + wallThickness / 2;
+    northEdge.position.y = wallHeight;
+    northEdge.material = edgeMaterial;
+
+    // South wall (negative Z)
+    const southWall = BABYLON.MeshBuilder.CreateBox('southWall', {
+      width: arenaSize + wallThickness * 2,
+      height: wallHeight,
+      depth: wallThickness
+    }, this.scene);
+    southWall.position.z = -(arenaSize / 2 + wallThickness / 2);
+    southWall.position.y = wallHeight / 2;
+    southWall.material = wallMaterial;
+
+    // South wall top edge
+    const southEdge = BABYLON.MeshBuilder.CreateBox('southEdge', {
+      width: arenaSize + wallThickness * 2,
+      height: 0.5,
+      depth: wallThickness + 0.5
+    }, this.scene);
+    southEdge.position.z = -(arenaSize / 2 + wallThickness / 2);
+    southEdge.position.y = wallHeight;
+    southEdge.material = edgeMaterial;
+
+    // East wall (positive X)
+    const eastWall = BABYLON.MeshBuilder.CreateBox('eastWall', {
+      width: wallThickness,
+      height: wallHeight,
+      depth: arenaSize
+    }, this.scene);
+    eastWall.position.x = arenaSize / 2 + wallThickness / 2;
+    eastWall.position.y = wallHeight / 2;
+    eastWall.material = wallMaterial;
+
+    // East wall top edge
+    const eastEdge = BABYLON.MeshBuilder.CreateBox('eastEdge', {
+      width: wallThickness + 0.5,
+      height: 0.5,
+      depth: arenaSize
+    }, this.scene);
+    eastEdge.position.x = arenaSize / 2 + wallThickness / 2;
+    eastEdge.position.y = wallHeight;
+    eastEdge.material = edgeMaterial;
+
+    // West wall (negative X)
+    const westWall = BABYLON.MeshBuilder.CreateBox('westWall', {
+      width: wallThickness,
+      height: wallHeight,
+      depth: arenaSize
+    }, this.scene);
+    westWall.position.x = -(arenaSize / 2 + wallThickness / 2);
+    westWall.position.y = wallHeight / 2;
+    westWall.material = wallMaterial;
+
+    // West wall top edge
+    const westEdge = BABYLON.MeshBuilder.CreateBox('westEdge', {
+      width: wallThickness + 0.5,
+      height: 0.5,
+      depth: arenaSize
+    }, this.scene);
+    westEdge.position.x = -(arenaSize / 2 + wallThickness / 2);
+    westEdge.position.y = wallHeight;
+    westEdge.material = edgeMaterial;
+
+    // Store wall references for cleanup
+    this.walls = [
+      northWall, northEdge,
+      southWall, southEdge,
+      eastWall, eastEdge,
+      westWall, westEdge
+    ];
+
+    console.log("Arena walls created");
+  }
+
   setupCamera() {
     // Create follow camera that locks on player's bike - simple setup
     this.camera = new BABYLON.FollowCamera('cam', this.player.node.position.clone(), this.scene);
@@ -972,8 +1090,8 @@ class TronGame {
     this.camera.radius = 30;
     this.camera.heightOffset = 8;
     this.camera.rotationOffset = 180;
-    this.camera.cameraAcceleration = 0.1;
-    this.camera.maxCameraSpeed = 100;
+    this.camera.cameraAcceleration = 0.2; // Doubled to keep up with faster bikes
+    this.camera.maxCameraSpeed = 200;     // Doubled to match new bike speed
   }
   
   checkBoundaryCollision(bike) {
@@ -1071,9 +1189,6 @@ class TronGame {
       console.log("Initializing AI movement");
       this.opponent.speed = this.aiParams.maxSpeed * 0.5; // Start at half speed
       this.aiState.targetHeading = this.opponent.angle; // Initialize target heading
-
-      // Initialize with "go straight" pattern for the first 2 seconds
-      this.aiState.initialStraightTime = Date.now() + 2000;
 
       this.aiInitialized = true;
 
@@ -1306,26 +1421,6 @@ class TronGame {
       return Math.atan2(directionVector.z, directionVector.x);
     };
 
-    // INITIAL PHASE: Go straight for the first 5-8 seconds
-    if (this.aiState.initialStraightTime && now < this.aiState.initialStraightTime) {
-      // Only avoid walls during initial phase, otherwise go straight
-      if (willHitWall) {
-        // Turn toward center
-        const toCenter = new BABYLON.Vector3(0, 0, 0).subtract(position).normalize();
-        this.aiState.targetHeading = calculateHeading(toCenter);
-      } else {
-        // Keep going straight
-        this.aiState.targetHeading = this.opponent.angle;
-      }
-
-      // Still handle jumps during initial phase
-      if (this.aiState.jumpNeeded && !this.opponentPhysics.jumping) {
-        this.handleOpponentJump();
-      }
-
-      return; // Skip rest of decision making during initial phase
-    }
-
     // PRIORITY 1: Predictive wall avoidance - HIGHEST PRIORITY
     if (willHitWall) {
       // Only set a new target if we're not already evading walls
@@ -1452,9 +1547,23 @@ class TronGame {
       accel = this.keys['KeyW'] ? this.ACC : this.keys['KeyS'] ? -this.ACC : 0;
     }
 
-    // Update player angle and speed
+    // Update player angle
     this.player.angle += turn * this.TURN * dt;
-    this.player.speed = BABYLON.Scalar.Clamp(this.player.speed + accel * dt, 0, this.MAX);
+
+    // Update player speed with passive deceleration
+    if (accel === 0) {
+      // When not actively accelerating, drift toward cruise speed
+      if (this.player.speed > this.CRUISE_SPEED) {
+        // Slow down toward cruise speed
+        this.player.speed = Math.max(this.CRUISE_SPEED, this.player.speed - this.DECEL * dt);
+      } else if (this.player.speed < this.CRUISE_SPEED) {
+        // Speed up toward cruise speed (if somehow below it)
+        this.player.speed = Math.min(this.CRUISE_SPEED, this.player.speed + this.DECEL * dt * 0.5);
+      }
+    } else {
+      // Active acceleration/deceleration
+      this.player.speed = BABYLON.Scalar.Clamp(this.player.speed + accel * dt, 0, this.MAX);
+    }
 
     // Calculate target roll angle based on turning direction
     const targetRoll = turn * this.ROLL_MAX; // Negative for realism (lean into turn)
@@ -1475,6 +1584,20 @@ class TronGame {
     // Update player position
     this.player.node.rotation.y = -this.player.angle + Math.PI / 2;
     this.player.node.position.addInPlace(this.direction(this.player.angle).scale(this.player.speed * dt));
+
+    // Update camera zoom based on speed (more dramatic zoom out at high speed)
+    if (this.camera) {
+      // Calculate normalized speed (0 to 1)
+      const speedRatio = this.player.speed / this.MAX;
+
+      // Map speed to camera radius with exponential curve for extreme drama
+      // Use power of 2.5 to make high speeds zoom out MUCH more dramatically
+      const targetRadius = this.CAMERA_MIN_RADIUS +
+        (this.CAMERA_MAX_RADIUS - this.CAMERA_MIN_RADIUS) * Math.pow(speedRatio, 2.5);
+
+      // Smoothly interpolate camera radius with faster response
+      this.camera.radius += (targetRadius - this.camera.radius) * dt * 4;
+    }
 
     // Handle jump physics for player
     if (this.playerPhysics.jumping) {
@@ -1879,7 +2002,8 @@ class TronGame {
     // Immediately stop updating positions
     this.engine.stopRenderLoop();
 
-    // Send game over event to opponent with reason
+    // Send game over event - this will trigger the popup via the callback
+    // The sendData callback (handleGameEventSP or sendGameData) will handle showing the popup
     this.sendData({
       type: 'gameover',
       reason: reason,
@@ -1887,15 +2011,9 @@ class TronGame {
       z: this.player.node.position.z
     });
 
-    // Show the score popup instead of auto-reloading
-    setTimeout(() => {
-      // Trigger the score popup in the parent app
-      if (this.singlePlayerMode && window.showSinglePlayerGameOverPopup) {
-        window.showSinglePlayerGameOverPopup(reason);
-      } else if (window.showGameOverPopup) {
-        window.showGameOverPopup(reason);
-      }
-    }, 1500); // Short delay to let the message be seen
+    // Note: We don't show the popup here anymore - it's handled by the callback
+    // to avoid duplicate popups. The callback (handleGameEventSP in SinglePlayer.js
+    // or handleGameEvent in app.js) will show the popup after a delay.
   }
 
   // Properly dispose of the game instance and clean up resources
@@ -1915,6 +2033,11 @@ class TronGame {
       this.opponent.trail.dispose();
     }
 
+    // Remove mobile controls if they exist
+    if (this.isMobile) {
+      this.disposeMobileControls();
+    }
+
     // Dispose of the scene (this will dispose all meshes, materials, etc.)
     if (this.scene) {
       this.scene.dispose();
@@ -1926,5 +2049,23 @@ class TronGame {
     }
 
     console.log("Game instance disposed");
+  }
+
+  // Helper method to clean up mobile controls
+  disposeMobileControls() {
+    console.log("Removing mobile controls");
+
+    // Remove mobile controls container
+    const controlsContainer = document.getElementById('mobile-controls');
+    if (controlsContainer) {
+      controlsContainer.remove();
+    }
+
+    // Reset touch control state
+    this.touchControls.active = false;
+    this.touchControls.turnValue = 0;
+    this.touchControls.accelerateValue = 0;
+
+    console.log("Mobile controls removed");
   }
 }
