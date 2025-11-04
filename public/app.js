@@ -14,6 +14,7 @@ let aiDifficulty = 'medium'; // default difficulty
 let playerScoreSP = 0;
 let aiScore = 0;
 let gameCountSP = 0;
+let positionUpdateInterval = null; // Track interval to prevent stacking on restart
 
 // Initialize the single player mode
 function initSinglePlayer() {
@@ -478,27 +479,43 @@ function startGame(data) {
   
   // Initialize game with multiplayer settings
   initializeGame(isFirstPlayer);
-  
-  // Start position update interval 
-  setInterval(() => {
+
+  // Clear old position update interval to prevent stacking on restart
+  if (positionUpdateInterval) {
+    clearInterval(positionUpdateInterval);
+    console.log("Cleared old position update interval");
+  }
+
+  // Start position update interval
+  positionUpdateInterval = setInterval(() => {
     if (gameStarted && window.gameInstance) {
       sendPositionUpdate();
     }
   }, 50); // Update position 20 times per second
+  console.log("Started new position update interval");
 }
 
 // End the game and return to lobby
 function endGame() {
   console.log("Ending game");
   gameStarted = false;
-  
+
+  // Clear position update interval
+  if (positionUpdateInterval) {
+    clearInterval(positionUpdateInterval);
+    positionUpdateInterval = null;
+  }
+
   if (gameMode === 'multi') {
     // Tell server this player is leaving the game
     socket.emit('leave-game');
   }
-  
-  // Clean up game instance
+
+  // Properly dispose of game instance
   if (window.gameInstance) {
+    if (typeof window.gameInstance.dispose === 'function') {
+      window.gameInstance.dispose();
+    }
     window.gameInstance = null;
   }
   
@@ -721,9 +738,12 @@ function showGameOverPopup(reason) {
 function restartGame() {
   console.log("Restarting game");
   gameStarted = false;
-  
-  // Clear game instance
+
+  // Properly dispose of game instance
   if (window.gameInstance) {
+    if (typeof window.gameInstance.dispose === 'function') {
+      window.gameInstance.dispose();
+    }
     window.gameInstance = null;
   }
   
@@ -757,6 +777,51 @@ document.getElementById('share-btn')?.addEventListener('click', () => {
   const url = window.location.href.split('?')[0];
   navigator.clipboard.writeText(`${url}?room=${roomId}`);
   showMessage('Link copied to clipboard!');
+});
+
+// Go back from lobby to room entry
+document.getElementById('lobby-back-btn')?.addEventListener('click', () => {
+  console.log("Going back from lobby to room entry");
+
+  // Tell server this player is leaving the room
+  if (socket) {
+    socket.emit('leave-game');
+  }
+
+  // Hide lobby, show join container
+  document.getElementById('lobby-container').style.display = 'none';
+  document.getElementById('join-container').style.display = 'block';
+
+  // Reset ready button state
+  document.getElementById('ready-btn').disabled = false;
+  document.getElementById('ready-btn').textContent = 'Ready';
+
+  // Clear player list
+  document.getElementById('player-list').innerHTML = '';
+});
+
+// Go to main menu from lobby
+document.getElementById('lobby-menu-btn')?.addEventListener('click', () => {
+  console.log("Going to main menu from lobby");
+
+  // Tell server this player is leaving the room
+  if (socket) {
+    socket.emit('leave-game');
+  }
+
+  // Hide lobby, show main menu
+  document.getElementById('lobby-container').style.display = 'none';
+  document.getElementById('main-menu').style.display = 'block';
+
+  // Reset ready button state
+  document.getElementById('ready-btn').disabled = false;
+  document.getElementById('ready-btn').textContent = 'Ready';
+
+  // Clear player list
+  document.getElementById('player-list').innerHTML = '';
+
+  // Reset game mode
+  gameMode = 'none';
 });
 
 // Create debug button

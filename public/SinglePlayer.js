@@ -209,10 +209,12 @@ function showSinglePlayerGameOverPopup(reason) {
 function restartGameSP() {
   console.log("Restarting single player game");
   gameStarted = false;
-  
-  // Clear game instance
+
+  // Properly dispose of game instance
   if (gameInstance) {
-    if (gameInstance.engine) {
+    if (typeof gameInstance.dispose === 'function') {
+      gameInstance.dispose();
+    } else if (gameInstance.engine) {
       gameInstance.engine.stopRenderLoop();
     }
     gameInstance = null;
@@ -229,10 +231,12 @@ function restartGameSP() {
 function endGameSP() {
   console.log("Ending single player game");
   gameStarted = false;
-  
-  // Clean up game instance
+
+  // Properly dispose of game instance
   if (gameInstance) {
-    if (gameInstance.engine) {
+    if (typeof gameInstance.dispose === 'function') {
+      gameInstance.dispose();
+    } else if (gameInstance.engine) {
       gameInstance.engine.stopRenderLoop();
     }
     gameInstance = null;
