@@ -748,7 +748,7 @@ class TronGame {
   loadCycleModel() {
     // Try to load the light cycle with minimal options
     console.log("Attempting to load light cycle model...");
-    const cycleUrl = "https://cdn.glitch.global/8dfd67b3-e211-4916-8346-635f7d975e09/assets%2Ftron_light_cycle.glb?v=1745381160389";
+    const cycleUrl = "/assets/tron_light_cycle.glb";
     
     BABYLON.SceneLoader.ImportMeshAsync("", "", cycleUrl, this.scene).then((result) => {   
       console.log("Light cycle loaded successfully");
