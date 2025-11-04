@@ -3,11 +3,17 @@ class TronGame {
   constructor(canvasId, isFirstPlayer, sendDataCallback, singlePlayerMode = false, aiDifficulty = 'medium') {
     // Configuration
     this.ARENA = 600;
-    this.MAX = 100; // Doubled from 50 for faster, more intense gameplay
-    this.ACC = 60;  // Doubled acceleration to match the faster speed
+    this.MAX = 150; // Increased by 50% for even more intense gameplay
+    this.ACC = 90;  // Increased acceleration to match the faster speed
+    this.CRUISE_SPEED = 30; // Default cruising speed (bikes drift toward this when not accelerating)
+    this.DECEL = 15; // Passive deceleration rate when coasting
     this.TURN = Math.PI / 2;
     this.TRAIL_MAX = 400; // Adjusted to match playground
     this.HIT_SQ = 9;
+
+    // Camera settings
+    this.CAMERA_MIN_RADIUS = 30; // Camera distance at low speed
+    this.CAMERA_MAX_RADIUS = 70; // Camera distance at max speed (much more dramatic zoom out)
     
     // Physics parameters
     this.ROLL_MAX = Math.PI / 6; // Maximum roll angle (30 degrees)
@@ -121,20 +127,38 @@ class TronGame {
   start() {
     // Get canvas and initialize engine
     const canvas = document.getElementById(this.canvasId);
-    // Explicitly set the canvas element's width and height (important for rendering quality)
-    const desiredResolution = Math.min(800, Math.min(window.innerWidth, window.innerHeight));
+
+    // Set canvas size based on device type
+    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+    let desiredResolution;
+
+    if (isMobile) {
+      // Mobile: use full viewport (no 800px limit)
+      desiredResolution = Math.min(window.innerWidth, window.innerHeight);
+    } else {
+      // Desktop: limit to 800px
+      desiredResolution = Math.min(800, Math.min(window.innerWidth, window.innerHeight));
+    }
+
     canvas.width = desiredResolution;
     canvas.height = desiredResolution;
 
-    this.engine = new BABYLON.Engine(canvas, true, { 
-      preserveDrawingBuffer: true, 
+    this.engine = new BABYLON.Engine(canvas, true, {
+      preserveDrawingBuffer: true,
       stencil: true,
       disableWebGL2Support: false,
       adaptToDeviceRatio: true
     });
-    
+
     window.addEventListener('resize', () => {
-      const newSize = Math.min(800, Math.min(window.innerWidth, window.innerHeight));
+      let newSize;
+      if (isMobile) {
+        // Mobile: use full viewport
+        newSize = Math.min(window.innerWidth, window.innerHeight);
+      } else {
+        // Desktop: limit to 800px
+        newSize = Math.min(800, Math.min(window.innerWidth, window.innerHeight));
+      }
       canvas.width = newSize;
       canvas.height = newSize;
       this.engine.resize();
@@ -246,14 +270,15 @@ class TronGame {
     // Create container for mobile controls
     const controlsContainer = document.createElement('div');
     controlsContainer.id = 'mobile-controls';
-    controlsContainer.style.position = 'absolute';
-    controlsContainer.style.bottom = '-100px';
+    controlsContainer.style.position = 'fixed';
+    controlsContainer.style.bottom = '20px';
     controlsContainer.style.left = '0';
     controlsContainer.style.width = '100%';
-    controlsContainer.style.height = '250px';
+    controlsContainer.style.height = '200px';
     controlsContainer.style.display = 'flex';
     controlsContainer.style.justifyContent = 'space-between';
     controlsContainer.style.pointerEvents = 'none';
+    controlsContainer.style.zIndex = '1000'; // Ensure it's above the canvas
     document.body.appendChild(controlsContainer);
 
     // Create virtual joystick container
@@ -458,9 +483,10 @@ class TronGame {
         }
       });
 
-      // Adjust camera for better mobile view
+      // Adjust camera ranges for better mobile view (wider range for mobile)
       if (this.camera) {
-        this.camera.radius = 40;
+        this.CAMERA_MIN_RADIUS = 40;
+        this.CAMERA_MAX_RADIUS = 80;
         this.camera.heightOffset = 12;
       }
 
@@ -1509,9 +1535,23 @@ class TronGame {
       accel = this.keys['KeyW'] ? this.ACC : this.keys['KeyS'] ? -this.ACC : 0;
     }
 
-    // Update player angle and speed
+    // Update player angle
     this.player.angle += turn * this.TURN * dt;
-    this.player.speed = BABYLON.Scalar.Clamp(this.player.speed + accel * dt, 0, this.MAX);
+
+    // Update player speed with passive deceleration
+    if (accel === 0) {
+      // When not actively accelerating, drift toward cruise speed
+      if (this.player.speed > this.CRUISE_SPEED) {
+        // Slow down toward cruise speed
+        this.player.speed = Math.max(this.CRUISE_SPEED, this.player.speed - this.DECEL * dt);
+      } else if (this.player.speed < this.CRUISE_SPEED) {
+        // Speed up toward cruise speed (if somehow below it)
+        this.player.speed = Math.min(this.CRUISE_SPEED, this.player.speed + this.DECEL * dt * 0.5);
+      }
+    } else {
+      // Active acceleration/deceleration
+      this.player.speed = BABYLON.Scalar.Clamp(this.player.speed + accel * dt, 0, this.MAX);
+    }
 
     // Calculate target roll angle based on turning direction
     const targetRoll = turn * this.ROLL_MAX; // Negative for realism (lean into turn)
@@ -1532,6 +1572,20 @@ class TronGame {
     // Update player position
     this.player.node.rotation.y = -this.player.angle + Math.PI / 2;
     this.player.node.position.addInPlace(this.direction(this.player.angle).scale(this.player.speed * dt));
+
+    // Update camera zoom based on speed (more dramatic zoom out at high speed)
+    if (this.camera) {
+      // Calculate normalized speed (0 to 1)
+      const speedRatio = this.player.speed / this.MAX;
+
+      // Map speed to camera radius with exponential curve for extreme drama
+      // Use power of 2.5 to make high speeds zoom out MUCH more dramatically
+      const targetRadius = this.CAMERA_MIN_RADIUS +
+        (this.CAMERA_MAX_RADIUS - this.CAMERA_MIN_RADIUS) * Math.pow(speedRatio, 2.5);
+
+      // Smoothly interpolate camera radius with faster response
+      this.camera.radius += (targetRadius - this.camera.radius) * dt * 4;
+    }
 
     // Handle jump physics for player
     if (this.playerPhysics.jumping) {

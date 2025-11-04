@@ -38,11 +38,14 @@ function initSinglePlayer() {
 function startSinglePlayerGame() {
   console.log(`Starting single player game with ${aiDifficulty} difficulty`);
   gameStarted = true; // Using global variable from app.js
-  
+
   // Hide menu UI, show game canvas
   document.getElementById('single-player-menu').style.display = 'none';
   document.getElementById('game-container').style.display = 'block';
-  
+
+  // Add game-active class to body for mobile fullscreen
+  document.body.classList.add('game-active');
+
   // Initialize game with single player settings
   // First player is always the human player (blue)
   initializeGameSP(true);
@@ -259,7 +262,10 @@ function endGameSP() {
     }
     gameInstance = null;
   }
-  
+
+  // Remove game-active class from body
+  document.body.classList.remove('game-active');
+
   document.getElementById('game-container').style.display = 'none';
   document.getElementById('main-menu').style.display = 'block';
   

@@ -252,11 +252,14 @@ function updatePlayerList(players) {
 function startGame(data) {
   console.log("Starting game");
   gameStarted = true;
-  
+
   // Hide lobby UI, show game canvas
   document.getElementById('lobby-container').style.display = 'none';
   document.getElementById('game-container').style.display = 'block';
-  
+
+  // Add game-active class to body for mobile fullscreen
+  document.body.classList.add('game-active');
+
   // Determine player colors (first player blue, second player yellow)
   const players = Object.values(data.players);
   const isFirstPlayer = players[0].id === playerId;
@@ -303,7 +306,10 @@ function endGame() {
     }
     window.gameInstance = null;
   }
-  
+
+  // Remove game-active class from body
+  document.body.classList.remove('game-active');
+
   // Return to appropriate screen based on game mode
   document.getElementById('game-container').style.display = 'none';
   
