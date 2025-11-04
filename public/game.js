@@ -149,6 +149,7 @@ class TronGame {
       disableWebGL2Support: false,
       adaptToDeviceRatio: true
     });
+    this.applyHardwareScaling();
 
     window.addEventListener('resize', () => {
       let newSize;
@@ -161,6 +162,7 @@ class TronGame {
       }
       canvas.width = newSize;
       canvas.height = newSize;
+      this.applyHardwareScaling();
       this.engine.resize();
     });
     
@@ -252,7 +254,10 @@ class TronGame {
 
     // Start game loop
     this.engine.runRenderLoop(() => this.update());
-    window.addEventListener('resize', () => this.engine.resize());
+    window.addEventListener('resize', () => {
+      this.applyHardwareScaling();
+      this.engine.resize();
+    });
   }
   
   setupControls() {
@@ -462,9 +467,8 @@ class TronGame {
     if (this.isMobile) {
       console.log("Applying mobile optimizations with high quality rendering");
 
-      // Remove hardware scaling to maintain full resolution rendering
-      // This keeps bikes and trails crisp instead of pixelated
-      this.engine.setHardwareScalingLevel(1.0);
+      // Match render resolution to device pixel density for crisp highlights
+      this.applyHardwareScaling();
 
       // Keep post-processing enabled with high quality settings
       if (this.renderPipeline) {
@@ -512,6 +516,18 @@ class TronGame {
       this.engine.adaptToDeviceRatio = true;             // Adapt to device ratio
       this.engine.disablePerformanceMonitorInBackground = true; // Save resources when in background
     }
+  }
+
+  applyHardwareScaling() {
+    if (!this.engine) {
+      return;
+    }
+
+    const maxDpr = this.isMobile ? 2 : 2.5;
+    const deviceRatio = window.devicePixelRatio || 1;
+    const clampedRatio = Math.min(Math.max(deviceRatio, 1), maxDpr);
+
+    this.engine.setHardwareScalingLevel(1 / clampedRatio);
   }
 
   
@@ -576,11 +592,17 @@ class TronGame {
       console.log("Setting up glow layer with high quality settings");
 
       // Use high quality settings for crisp rendering on all devices
-      this.glowLayer = new BABYLON.GlowLayer("glow", this.scene, {
+      const availableSamples = this.engine?.getCaps?.().maxMSAASamples || 0;
+      const glowOptions = {
         blurKernelSize: 64,                       // Full quality blur kernel
-        mainTextureFixedSize: 512,                // Fixed size for good performance
         mainTextureRatio: 1.0                     // Full resolution glow texture
-      });
+      };
+
+      if (availableSamples > 1) {
+        glowOptions.mainTextureSamples = Math.min(4, availableSamples);
+      }
+
+      this.glowLayer = new BABYLON.GlowLayer("glow", this.scene, glowOptions);
 
       // Set consistent intensity across devices
       this.glowLayer.intensity = 1.5;
