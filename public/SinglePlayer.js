@@ -22,10 +22,16 @@ function initSinglePlayer() {
   
   // Set up difficulty selection
   const difficultySelect = document.getElementById('difficulty-select');
-  difficultySelect.addEventListener('change', (e) => {
-    aiDifficulty = e.target.value;
-    console.log(`Difficulty set to: ${aiDifficulty}`);
-  });
+  if (difficultySelect) {
+    difficultySelect.value = aiDifficulty;
+    if (!difficultySelect.dataset.bound) {
+      difficultySelect.addEventListener('change', (e) => {
+        aiDifficulty = e.target.value;
+        console.log(`Difficulty set to: ${aiDifficulty}`);
+      });
+      difficultySelect.dataset.bound = 'true';
+    }
+  }
   
   // Back to main menu button
   document.getElementById('back-to-menu-btn').addEventListener('click', () => {
