@@ -88,7 +88,13 @@ class TronGame {
       jumping: false
     };
     this.interpolationTime = 100; // Time in ms to interpolate between positions
-    
+
+    // Track opponent's initial position for trail activation
+    this.initialOpponentPosition = null;
+
+    // Track if game is fully initialized to prevent race conditions on restart
+    this.gameInitialized = false;
+
     // Define colors explicitly to ensure consistency
     this.playerColors = {
       player1: new BABYLON.Color3(0.0, 0.85, 1.0),  // Tron blue
@@ -217,7 +223,12 @@ class TronGame {
       this.opponent.node.position.x = -this.ARENA / 4;
       this.player.angle = Math.PI;
     }
-    
+
+    // Capture opponent's spawn position for trail activation detection
+    // This MUST happen here before any network updates can modify the position
+    this.initialOpponentPosition = this.opponent.node.position.clone();
+    console.log(`Captured opponent spawn position: ${this.initialOpponentPosition}`);
+
     // Set up camera
     this.setupCamera();
     
@@ -1429,6 +1440,8 @@ class TronGame {
     // Handle trails after a brief delay
     if (!this.gameStartTime) {
       this.gameStartTime = Date.now();
+      this.gameInitialized = true; // Mark game as fully initialized after first frame
+      console.log("Game fully initialized, position updates will now be processed");
     } else {
       // Activate trails after 500ms if not already active AND the bike has moved
       const currentTime = Date.now();
@@ -1466,8 +1479,25 @@ class TronGame {
 
       // For opponent trail - same logic
       if (!this.opponent.trailActive && hasGameStarted) {
-        // Only activate trail when opponent starts moving
-        if (this.opponent.speed > 0.1) {
+        // Only activate trail when opponent has actually moved from initial position
+        // This prevents phantom trails in multiplayer before position sync completes
+        let shouldActivateTrail = false;
+
+        if (this.singlePlayerMode) {
+          // In single player, check speed (AI sets this directly)
+          shouldActivateTrail = this.opponent.speed > 0.1;
+        } else {
+          // In multiplayer, check if opponent has moved from initial position
+          if (this.initialOpponentPosition) {
+            const distanceMoved = BABYLON.Vector3.Distance(
+              this.opponent.node.position,
+              this.initialOpponentPosition
+            );
+            shouldActivateTrail = distanceMoved > 1; // Moved more than 1 unit
+          }
+        }
+
+        if (shouldActivateTrail) {
           console.log("Activating opponent trail");
 
           // Dispose of existing trail if it exists
@@ -1686,6 +1716,13 @@ class TronGame {
   }
   
   updateOpponentPosition(x, z, angle, speed, height = 0, jumping = false) {
+    // Guard against position updates before game is fully initialized
+    // This prevents race conditions during restart where updates arrive before first render
+    if (!this.gameInitialized) {
+      console.log("Ignoring position update - game not yet initialized");
+      return;
+    }
+
     // Store the previous position as the last update
     this.lastOpponentUpdate = {
       position: this.nextOpponentUpdate.position ? this.nextOpponentUpdate.position.clone() : new BABYLON.Vector3(x, height, z),
@@ -1777,5 +1814,35 @@ class TronGame {
         window.showGameOverPopup(reason);
       }
     }, 1500); // Short delay to let the message be seen
+  }
+
+  // Properly dispose of the game instance and clean up resources
+  dispose() {
+    console.log("Disposing game instance");
+
+    // Stop the render loop
+    if (this.engine) {
+      this.engine.stopRenderLoop();
+    }
+
+    // Dispose of trails
+    if (this.player && this.player.trail) {
+      this.player.trail.dispose();
+    }
+    if (this.opponent && this.opponent.trail) {
+      this.opponent.trail.dispose();
+    }
+
+    // Dispose of the scene (this will dispose all meshes, materials, etc.)
+    if (this.scene) {
+      this.scene.dispose();
+    }
+
+    // Dispose of the engine
+    if (this.engine) {
+      this.engine.dispose();
+    }
+
+    console.log("Game instance disposed");
   }
 }
