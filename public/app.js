@@ -15,6 +15,13 @@ let playerScoreSP = 0;
 let aiScore = 0;
 let gameCountSP = 0;
 let positionUpdateInterval = null; // Track interval to prevent stacking on restart
+let scoreboard = {
+  you: 0,
+  opponent: 0
+};
+let scoreboardVisible = false;
+let playerDisplayName = 'You';
+let opponentDisplayName = 'Opponent';
 
 // Note: Single player functions (initSinglePlayer, startSinglePlayerGame,
 // initializeGameSP, resizeGameCanvas, handleGameEventSP, etc.) are defined
@@ -56,6 +63,12 @@ function initApp() {
   document.getElementById('game-container').style.display = 'none';
   document.getElementById('single-player-menu').style.display = 'none';
   document.getElementById('main-menu').style.display = 'block';
+
+  scoreboard = { you: 0, opponent: 0 };
+  scoreboardVisible = false;
+  playerDisplayName = 'You';
+  opponentDisplayName = 'Opponent';
+  updateScoreboard();
 
   // Initialize background music
   backgroundMusic = new Audio('/assets/end_of_line.mp3');
@@ -208,15 +221,21 @@ function initSocket() {
 function joinRoom() {
   const roomInput = document.getElementById('room-id');
   const nameInput = document.getElementById('player-name');
-  
+
   roomId = roomInput.value.trim();
   const playerName = nameInput.value.trim();
-  
+
   if (!roomId || !playerName) {
     showMessage('Please enter room ID and your name');
     return;
   }
-  
+
+  scoreboard = { you: 0, opponent: 0 };
+  scoreboardVisible = false;
+  playerDisplayName = playerName || 'You';
+  opponentDisplayName = 'Opponent';
+  updateScoreboard();
+
   console.log(`Joining room: ${roomId} as ${playerName}`);
   socket.emit('join-room', {
     roomId,
@@ -240,6 +259,22 @@ function setReady() {
 function updatePlayerList(players) {
   const list = document.getElementById('player-list');
   list.innerHTML = '';
+
+  if (players && playerId) {
+    const self = players[playerId];
+    if (self && self.name) {
+      playerDisplayName = self.name;
+    }
+
+    const otherPlayer = Object.values(players).find(player => player.id !== playerId);
+    if (otherPlayer && otherPlayer.name) {
+      opponentDisplayName = otherPlayer.name;
+    } else {
+      opponentDisplayName = 'Opponent';
+    }
+
+    updateScoreboard();
+  }
   
   Object.values(players).forEach(player => {
     const item = document.createElement('li');
@@ -264,6 +299,20 @@ function startGame(data) {
   const players = Object.values(data.players);
   const isFirstPlayer = players[0].id === playerId;
   console.log(`This player is ${isFirstPlayer ? 'first' : 'second'} player`);
+
+  if (gameMode === 'multi') {
+    const self = data.players[playerId];
+    if (self && self.name) {
+      playerDisplayName = self.name;
+    }
+
+    const other = Object.values(data.players).find(player => player.id !== playerId);
+    if (other && other.name) {
+      opponentDisplayName = other.name;
+    } else {
+      opponentDisplayName = 'Opponent';
+    }
+  }
   
   // Initialize game with multiplayer settings
   initializeGame(isFirstPlayer);
@@ -312,6 +361,8 @@ function endGame() {
 
   // Return to appropriate screen based on game mode
   document.getElementById('game-container').style.display = 'none';
+  scoreboardVisible = false;
+  updateScoreboard();
   
   if (gameMode === 'multi') {
     document.getElementById('join-container').style.display = 'block';
@@ -321,9 +372,9 @@ function endGame() {
   
   // Reset game mode
   gameMode = 'none';
-  
-  // Clear the game canvas
-  document.getElementById('game-container').innerHTML = '<canvas id="game-canvas"></canvas><div id="game-message"></div>';
+
+  resetGameSurface();
+  updateScoreboard();
 }
 
 // Initialize game instance
@@ -350,6 +401,13 @@ function initializeGame(isFirstPlayer) {
   }
   
   window.gameInstance.start();
+
+  if (gameMode === 'multi') {
+    scoreboardVisible = true;
+  } else {
+    scoreboardVisible = false;
+  }
+  updateScoreboard();
 }
 
 // Generic game event handler (for both modes)
@@ -436,6 +494,59 @@ function sendGameData(data) {
   }
 }
 
+function updateScoreboard() {
+  const container = document.getElementById('scoreboard');
+  if (!container) {
+    return;
+  }
+
+  const youEl = document.getElementById('score-you');
+  const opponentEl = document.getElementById('score-opponent');
+
+  const youName = playerDisplayName || 'You';
+  const opponentName = opponentDisplayName || 'Opponent';
+
+  if (youEl) {
+    youEl.textContent = `${youName}: ${scoreboard.you}`;
+  }
+  if (opponentEl) {
+    opponentEl.textContent = `${opponentName}: ${scoreboard.opponent}`;
+  }
+
+  const shouldShow = scoreboardVisible;
+  container.style.display = shouldShow ? 'block' : 'none';
+}
+
+function resetGameSurface() {
+  const container = document.getElementById('game-container');
+  if (!container) {
+    return;
+  }
+
+  const scoreboardEl = document.getElementById('scoreboard');
+  let preservedScoreboard = null;
+  if (scoreboardEl && scoreboardEl.parentElement === container) {
+    preservedScoreboard = scoreboardEl;
+    container.removeChild(scoreboardEl);
+  }
+
+  while (container.firstChild) {
+    container.removeChild(container.firstChild);
+  }
+
+  const canvas = document.createElement('canvas');
+  canvas.id = 'game-canvas';
+  container.appendChild(canvas);
+
+  const message = document.createElement('div');
+  message.id = 'game-message';
+  container.appendChild(message);
+
+  if (preservedScoreboard) {
+    container.insertBefore(preservedScoreboard, container.firstChild);
+  }
+}
+
 function showGameOverPopup(reason) {
   console.log("Showing game over popup, reason:", reason);
 
@@ -456,6 +567,15 @@ function showGameOverPopup(reason) {
     opponentScore++;
   }
   gameCount++;
+
+  if (gameMode === 'multi') {
+    if (playerWon) {
+      scoreboard.you++;
+    } else {
+      scoreboard.opponent++;
+    }
+    updateScoreboard();
+  }
 
   // Create the popup container if it doesn't exist
   if (!popup) {
@@ -550,8 +670,8 @@ function restartGame() {
   // Signal to server that this player is ready to restart
   socket.emit('restart-ready');
   
-  // Clear the game container
-  document.getElementById('game-container').innerHTML = '<canvas id="game-canvas"></canvas><div id="game-message"></div>';
+  resetGameSurface();
+  updateScoreboard();
 }
 
 // Show message in UI

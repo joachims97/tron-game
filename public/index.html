@@ -344,6 +344,14 @@
 
   <!-- Game Canvas -->
   <div id="game-container" style="display: none;">
+    <div id="scoreboard" style="display: none; position: absolute; top: 12px; left: 12px; background: rgba(0,0,0,0.6); border: 1px solid #00ffff; border-radius: 6px; padding: 8px 12px; color: #00ffff; font-family: 'Arial', sans-serif; font-size: 14px; letter-spacing: 0.5px; z-index: 5;">
+      <div id="scoreboard-title" style="font-weight: bold; text-transform: uppercase; font-size: 12px; margin-bottom: 4px;">Score</div>
+      <div id="scoreboard-body">
+        <span id="score-you" style="color: #00ff88; font-weight: bold;">You: 0</span>
+        <span style="margin: 0 6px; color: rgba(255,255,255,0.6);">|</span>
+        <span id="score-opponent" style="color: #ff5555; font-weight: bold;">Opponent: 0</span>
+      </div>
+    </div>
     <canvas id="game-canvas"></canvas>
     <div id="game-message"></div>
   </div>
