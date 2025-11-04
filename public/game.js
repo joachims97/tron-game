@@ -332,34 +332,16 @@ class TronGame {
       jumpButtonElem.style.backgroundColor = 'rgba(0, 180, 255, 0.5)';
     });
 
-    // Add debug info
-    const debugInfo = document.createElement('div');
-    debugInfo.id = 'joystick-debug';
-    debugInfo.style.position = 'absolute';
-    debugInfo.style.top = '10px';
-    debugInfo.style.left = '10px';
-    debugInfo.style.color = 'white';
-    debugInfo.style.backgroundColor = 'rgba(0,0,0,0.5)';
-    debugInfo.style.padding = '5px';
-    debugInfo.style.fontSize = '12px';
-    debugInfo.style.zIndex = '1000';
-    debugInfo.textContent = 'Touch: waiting...';
-    document.body.appendChild(debugInfo);
-
-    // Set up joystick container touch events with verbose debugging
+    // Set up joystick container touch events
     joystickContainer.addEventListener('touchstart', (e) => {
       e.preventDefault();
       this.touchControls.active = true;
-      console.log("Touch started on joystick");
-      debugInfo.textContent = "Touch started";
       this.updateJoystickPosition(e.touches[0]);
     });
 
     joystickContainer.addEventListener('touchmove', (e) => {
       e.preventDefault();
       if (this.touchControls.active) {
-        console.log("Touch moved on joystick");
-        debugInfo.textContent = `Move: ${e.touches[0].clientX},${e.touches[0].clientY}`;
         this.updateJoystickPosition(e.touches[0]);
       }
     });
@@ -370,8 +352,6 @@ class TronGame {
       this.touchControls.turnValue = 0;
       this.touchControls.accelerateValue = 0;
       joystickThumb.style.transform = 'translate(-50%, -50%)';
-      console.log("Touch ended on joystick");
-      debugInfo.textContent = "Touch ended";
     };
 
     joystickContainer.addEventListener('touchend', endTouch);
@@ -380,16 +360,14 @@ class TronGame {
     console.log("Mobile controls setup complete");
   }
 
-  // Completely rewritten update method with better debugging
+  // Update joystick position based on touch input
   updateJoystickPosition(touch) {
     if (!this.joystickThumb) {
-      console.error("Joystick thumb not found!");
       return;
     }
 
     const joystickContainer = document.getElementById('joystick-container');
     if (!joystickContainer) {
-      console.error("Joystick container not found!");
       return;
     }
 
@@ -400,11 +378,6 @@ class TronGame {
     // Calculate distance from center
     const deltaX = touch.clientX - centerX;
     const deltaY = touch.clientY - centerY;
-
-    // Log these values to verify calculations
-    console.log(`Touch at: ${touch.clientX}, ${touch.clientY}`);
-    console.log(`Joystick center at: ${centerX}, ${centerY}`);
-    console.log(`Delta: ${deltaX}, ${deltaY}`);
 
     const maxDistance = 50;  // Half of joystick base radius
 
@@ -423,20 +396,13 @@ class TronGame {
     const thumbX = dx * maxDistance;
     const thumbY = dy * maxDistance;
 
-    // Update joystick visual - log the transform that will be applied
+    // Update joystick visual
     const transform = `translate(calc(-50% + ${thumbX}px), calc(-50% + ${thumbY}px))`;
-    console.log(`Setting transform: ${transform}`);
     this.joystickThumb.style.transform = transform;
 
     // Update joystick values for game control
     this.touchControls.turnValue = -dx;
     this.touchControls.accelerateValue = dy;
-
-    // Update debug info
-    const debugInfo = document.getElementById('joystick-debug');
-    if (debugInfo) {
-      debugInfo.textContent = `Touch: ${Math.round(dx*100)/100}, ${Math.round(dy*100)/100}`;
-    }
   }
 
   // Add method to handle window resize
@@ -1879,7 +1845,8 @@ class TronGame {
     // Immediately stop updating positions
     this.engine.stopRenderLoop();
 
-    // Send game over event to opponent with reason
+    // Send game over event - this will trigger the popup via the callback
+    // The sendData callback (handleGameEventSP or sendGameData) will handle showing the popup
     this.sendData({
       type: 'gameover',
       reason: reason,
@@ -1887,15 +1854,9 @@ class TronGame {
       z: this.player.node.position.z
     });
 
-    // Show the score popup instead of auto-reloading
-    setTimeout(() => {
-      // Trigger the score popup in the parent app
-      if (this.singlePlayerMode && window.showSinglePlayerGameOverPopup) {
-        window.showSinglePlayerGameOverPopup(reason);
-      } else if (window.showGameOverPopup) {
-        window.showGameOverPopup(reason);
-      }
-    }, 1500); // Short delay to let the message be seen
+    // Note: We don't show the popup here anymore - it's handled by the callback
+    // to avoid duplicate popups. The callback (handleGameEventSP in SinglePlayer.js
+    // or handleGameEvent in app.js) will show the popup after a delay.
   }
 
   // Properly dispose of the game instance and clean up resources
@@ -1915,6 +1876,11 @@ class TronGame {
       this.opponent.trail.dispose();
     }
 
+    // Remove mobile controls if they exist
+    if (this.isMobile) {
+      this.disposeMobileControls();
+    }
+
     // Dispose of the scene (this will dispose all meshes, materials, etc.)
     if (this.scene) {
       this.scene.dispose();
@@ -1926,5 +1892,23 @@ class TronGame {
     }
 
     console.log("Game instance disposed");
+  }
+
+  // Helper method to clean up mobile controls
+  disposeMobileControls() {
+    console.log("Removing mobile controls");
+
+    // Remove mobile controls container
+    const controlsContainer = document.getElementById('mobile-controls');
+    if (controlsContainer) {
+      controlsContainer.remove();
+    }
+
+    // Reset touch control state
+    this.touchControls.active = false;
+    this.touchControls.turnValue = 0;
+    this.touchControls.accelerateValue = 0;
+
+    console.log("Mobile controls removed");
   }
 }
