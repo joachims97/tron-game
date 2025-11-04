@@ -3,8 +3,8 @@ class TronGame {
   constructor(canvasId, isFirstPlayer, sendDataCallback, singlePlayerMode = false, aiDifficulty = 'medium') {
     // Configuration
     this.ARENA = 600;
-    this.MAX = 50;
-    this.ACC = 30;
+    this.MAX = 100; // Doubled from 50 for faster, more intense gameplay
+    this.ACC = 60;  // Doubled acceleration to match the faster speed
     this.TURN = Math.PI / 2;
     this.TRAIL_MAX = 400; // Adjusted to match playground
     this.HIT_SQ = 9;
@@ -210,6 +210,9 @@ class TronGame {
     // Load 3D models - with error handling
     this.loadCycleModel();
     this.loadGridModel();
+
+    // Create arena walls
+    this.createArenaWalls();
 
     // Start game loop
     this.engine.runRenderLoop(() => this.update());
@@ -931,6 +934,117 @@ class TronGame {
     });
   }
 
+  createArenaWalls() {
+    console.log("Creating arena walls");
+
+    const wallHeight = 20;
+    const wallThickness = 4;
+    const arenaSize = this.ARENA;
+
+    // Create wall material - black with blue emissive highlights
+    const wallMaterial = new BABYLON.StandardMaterial('wallMat', this.scene);
+    wallMaterial.diffuseColor = new BABYLON.Color3(0.05, 0.05, 0.05); // Very dark gray (almost black)
+    wallMaterial.emissiveColor = new BABYLON.Color3(0, 0.3, 0.5); // Dark blue emissive glow
+    wallMaterial.specularColor = new BABYLON.Color3(0, 0.5, 1.0); // Brighter blue specular
+    wallMaterial.specularPower = 32;
+
+    // Create edge highlight material - brighter blue
+    const edgeMaterial = new BABYLON.StandardMaterial('edgeMat', this.scene);
+    edgeMaterial.diffuseColor = BABYLON.Color3.Black();
+    edgeMaterial.emissiveColor = new BABYLON.Color3(0, 0.7, 1.0); // Bright Tron blue
+    edgeMaterial.specularColor = BABYLON.Color3.Black();
+
+    // North wall (positive Z)
+    const northWall = BABYLON.MeshBuilder.CreateBox('northWall', {
+      width: arenaSize + wallThickness * 2,
+      height: wallHeight,
+      depth: wallThickness
+    }, this.scene);
+    northWall.position.z = arenaSize / 2 + wallThickness / 2;
+    northWall.position.y = wallHeight / 2;
+    northWall.material = wallMaterial;
+
+    // North wall top edge
+    const northEdge = BABYLON.MeshBuilder.CreateBox('northEdge', {
+      width: arenaSize + wallThickness * 2,
+      height: 0.5,
+      depth: wallThickness + 0.5
+    }, this.scene);
+    northEdge.position.z = arenaSize / 2 + wallThickness / 2;
+    northEdge.position.y = wallHeight;
+    northEdge.material = edgeMaterial;
+
+    // South wall (negative Z)
+    const southWall = BABYLON.MeshBuilder.CreateBox('southWall', {
+      width: arenaSize + wallThickness * 2,
+      height: wallHeight,
+      depth: wallThickness
+    }, this.scene);
+    southWall.position.z = -(arenaSize / 2 + wallThickness / 2);
+    southWall.position.y = wallHeight / 2;
+    southWall.material = wallMaterial;
+
+    // South wall top edge
+    const southEdge = BABYLON.MeshBuilder.CreateBox('southEdge', {
+      width: arenaSize + wallThickness * 2,
+      height: 0.5,
+      depth: wallThickness + 0.5
+    }, this.scene);
+    southEdge.position.z = -(arenaSize / 2 + wallThickness / 2);
+    southEdge.position.y = wallHeight;
+    southEdge.material = edgeMaterial;
+
+    // East wall (positive X)
+    const eastWall = BABYLON.MeshBuilder.CreateBox('eastWall', {
+      width: wallThickness,
+      height: wallHeight,
+      depth: arenaSize
+    }, this.scene);
+    eastWall.position.x = arenaSize / 2 + wallThickness / 2;
+    eastWall.position.y = wallHeight / 2;
+    eastWall.material = wallMaterial;
+
+    // East wall top edge
+    const eastEdge = BABYLON.MeshBuilder.CreateBox('eastEdge', {
+      width: wallThickness + 0.5,
+      height: 0.5,
+      depth: arenaSize
+    }, this.scene);
+    eastEdge.position.x = arenaSize / 2 + wallThickness / 2;
+    eastEdge.position.y = wallHeight;
+    eastEdge.material = edgeMaterial;
+
+    // West wall (negative X)
+    const westWall = BABYLON.MeshBuilder.CreateBox('westWall', {
+      width: wallThickness,
+      height: wallHeight,
+      depth: arenaSize
+    }, this.scene);
+    westWall.position.x = -(arenaSize / 2 + wallThickness / 2);
+    westWall.position.y = wallHeight / 2;
+    westWall.material = wallMaterial;
+
+    // West wall top edge
+    const westEdge = BABYLON.MeshBuilder.CreateBox('westEdge', {
+      width: wallThickness + 0.5,
+      height: 0.5,
+      depth: arenaSize
+    }, this.scene);
+    westEdge.position.x = -(arenaSize / 2 + wallThickness / 2);
+    westEdge.position.y = wallHeight;
+    westEdge.material = edgeMaterial;
+
+    // Store wall references for cleanup
+    this.walls = [
+      northWall, northEdge,
+      southWall, southEdge,
+      eastWall, eastEdge,
+      westWall, westEdge
+    ];
+
+    console.log("Arena walls created");
+  }
+
   setupCamera() {
     // Create follow camera that locks on player's bike - simple setup
     this.camera = new BABYLON.FollowCamera('cam', this.player.node.position.clone(), this.scene);
@@ -938,8 +1052,8 @@ class TronGame {
     this.camera.radius = 30;
     this.camera.heightOffset = 8;
     this.camera.rotationOffset = 180;
-    this.camera.cameraAcceleration = 0.1;
-    this.camera.maxCameraSpeed = 100;
+    this.camera.cameraAcceleration = 0.2; // Doubled to keep up with faster bikes
+    this.camera.maxCameraSpeed = 200;     // Doubled to match new bike speed
   }
   
   checkBoundaryCollision(bike) {
@@ -1037,9 +1151,6 @@ class TronGame {
       console.log("Initializing AI movement");
       this.opponent.speed = this.aiParams.maxSpeed * 0.5; // Start at half speed
       this.aiState.targetHeading = this.opponent.angle; // Initialize target heading
-
-      // Initialize with "go straight" pattern for the first 2 seconds
-      this.aiState.initialStraightTime = Date.now() + 2000;
 
       this.aiInitialized = true;
 
@@ -1271,26 +1382,6 @@ class TronGame {
     const calculateHeading = (directionVector) => {
       return Math.atan2(directionVector.z, directionVector.x);
     };
-
-    // INITIAL PHASE: Go straight for the first 5-8 seconds
-    if (this.aiState.initialStraightTime && now < this.aiState.initialStraightTime) {
-      // Only avoid walls during initial phase, otherwise go straight
-      if (willHitWall) {
-        // Turn toward center
-        const toCenter = new BABYLON.Vector3(0, 0, 0).subtract(position).normalize();
-        this.aiState.targetHeading = calculateHeading(toCenter);
-      } else {
-        // Keep going straight
-        this.aiState.targetHeading = this.opponent.angle;
-      }
-
-      // Still handle jumps during initial phase
-      if (this.aiState.jumpNeeded && !this.opponentPhysics.jumping) {
-        this.handleOpponentJump();
-      }
-
-      return; // Skip rest of decision making during initial phase
-    }
 
     // PRIORITY 1: Predictive wall avoidance - HIGHEST PRIORITY
     if (willHitWall) {
