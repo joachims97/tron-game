@@ -2,7 +2,7 @@
 class TronGame {
   constructor(canvasId, isFirstPlayer, sendDataCallback, singlePlayerMode = false, aiDifficulty = 'medium') {
     // Configuration
-    this.ARENA = 600;
+    this.ARENA = 1200; // Doubled arena size for more playing space
     this.MAX = 150; // Increased by 50% for even more intense gameplay
     this.ACC = 90;  // Increased acceleration to match the faster speed
     this.CRUISE_SPEED = 30; // Default cruising speed (bikes drift toward this when not accelerating)
@@ -13,7 +13,7 @@ class TronGame {
 
     // Camera settings
     this.CAMERA_MIN_RADIUS = 30; // Camera distance at low speed
-    this.CAMERA_MAX_RADIUS = 70; // Camera distance at max speed (much more dramatic zoom out)
+    this.CAMERA_MAX_RADIUS = 100; // Camera distance at max speed (increased for larger arena)
     
     // Physics parameters
     this.ROLL_MAX = Math.PI / 6; // Maximum roll angle (30 degrees)
@@ -166,7 +166,19 @@ class TronGame {
     
     // Create the scene first - THIS IS THE KEY FIX
     this.scene = new BABYLON.Scene(this.engine);
-    
+
+    // Set dark background color for Tron aesthetic
+    this.scene.clearColor = new BABYLON.Color4(0.05, 0.05, 0.08, 1.0);
+
+    // Create skybox with dark grey clouds
+    this.skybox = BABYLON.MeshBuilder.CreateBox("skyBox", {size: 2500}, this.scene);
+    const skyboxMaterial = new BABYLON.StandardMaterial("skyBoxMat", this.scene);
+    skyboxMaterial.backFaceCulling = false;
+    skyboxMaterial.disableLighting = true;
+    skyboxMaterial.emissiveColor = new BABYLON.Color3(0.1, 0.1, 0.12); // Dark grey
+    this.skybox.material = skyboxMaterial;
+    this.skybox.infiniteDistance = true;
+
     // Set up lighting - just one basic light
     new BABYLON.HemisphericLight('L', new BABYLON.Vector3(0, 1, 0), this.scene)
       .intensity = 0.6; // Match playground intensity
