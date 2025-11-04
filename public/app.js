@@ -10,7 +10,7 @@ let playerScore = 0;
 let opponentScore = 0;
 let gameCount = 0;
 let gameInstance = null;
-let aiDifficulty = 'medium'; // default difficulty
+let aiDifficulty = 'normal'; // default difficulty
 let playerScoreSP = 0;
 let aiScore = 0;
 let gameCountSP = 0;
@@ -337,7 +337,7 @@ function initializeGame(isFirstPlayer) {
       true, // Always first player in single player mode
       handleGameEvent,
       true, // Single player mode ON
-      document.getElementById('difficulty-select')?.value || 'medium'
+      document.getElementById('difficulty-select')?.value || 'normal'
     );
   } else {
     // Initialize multiplayer game

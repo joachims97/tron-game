@@ -1,6 +1,6 @@
 // TronGame class - With improved trail effects and enhanced physics
 class TronGame {
-  constructor(canvasId, isFirstPlayer, sendDataCallback, singlePlayerMode = false, aiDifficulty = 'medium') {
+  constructor(canvasId, isFirstPlayer, sendDataCallback, singlePlayerMode = false, aiDifficulty = 'normal') {
     // Configuration
     this.ARENA = 1200; // Doubled arena size for more playing space
     this.MAX = 150; // Increased by 50% for even more intense gameplay
@@ -8,7 +8,7 @@ class TronGame {
     this.CRUISE_SPEED = 30; // Default cruising speed (bikes drift toward this when not accelerating)
     this.DECEL = 15; // Passive deceleration rate when coasting
     this.TURN = Math.PI / 2;
-    this.TRAIL_MAX = 400; // Adjusted to match playground
+    this.TRAIL_MAX = 200; // Shortened trail length for tighter arenas
     this.HIT_SQ = 9;
 
     // Camera settings
@@ -56,22 +56,40 @@ class TronGame {
       jumping: false,
       jumpVelocity: 0,
       height: 0,
-      trailPaused: false
+      trailPaused: false,
+      lastJumpTime: 0
     };
     
     // Add single player mode properties
     this.singlePlayerMode = singlePlayerMode;
     this.aiDifficulty = aiDifficulty;
-    this.aiUpdateInterval = 50; // ms between AI decisions
-    this.lastAIDecision = 0;
     this.aiState = {
-      targetAngle: 0,
       targetHeading: 0,
-      danger: false,
-      jumpNeeded: false,
-      lookAheadDistance: 0,
-      dangerDirections: []
+      desiredSpeed: 0,
+      mode: 'explore',
+      lastDecisionTime: 0,
+      dangerLevel: 0,
+      nearestHazard: null,
+      pendingJump: null,
+      debug: {},
+      trailDistanceSq: Infinity
     };
+    this.aiDebugData = null;
+    this.trailHistory = {
+      player: {
+        points: [],
+        lastSampleTime: 0,
+        lastPoint: null
+      },
+      opponent: {
+        points: [],
+        lastSampleTime: 0,
+        lastPoint: null
+      }
+    };
+    this.trailSampleInterval = 60; // ms between stored samples
+    this.trailSampleMinDistanceSq = 4; // minimum movement squared to store a new point
+    this.trailMaxSamples = 800;
 
     // Set AI difficulty parameters
     this.setAIDifficultyParams();
@@ -1164,383 +1182,645 @@ class TronGame {
       console.log("Opponent jumping!");
       this.opponentPhysics.jumping = true;
       this.opponentPhysics.jumpVelocity = this.JUMP_FORCE;
+      this.opponentPhysics.lastJumpTime = Date.now();
     }
   }
   
 
   // Add this method to configure AI based on difficulty
   setAIDifficultyParams() {
-    switch (this.aiDifficulty) {
-      case 'easy':
-        this.aiParams = {
-          reactionTime: 400,       // ms to react to obstacles
-          lookAhead: 15,           // Units to look ahead for obstacles
-          errorRate: 0.3,          // Chance of making a mistake
-          maxSpeed: this.MAX * 0.7 // Lower max speed
-        };
-        break;
-      case 'normal':
-        this.aiParams = {
-          reactionTime: 250,
-          lookAhead: 30,
-          errorRate: 0.1,
-          maxSpeed: this.MAX * 0.9
-        };
-        break;
-      default:
-        // Default to normal
-        this.aiParams = {
-          reactionTime: 250,
-          lookAhead: 30,
-          errorRate: 0.1,
-          maxSpeed: this.MAX * 0.9
-        };
-    }
+    const difficultyMap = {
+      easy: {
+        decisionInterval: 450,
+        planHorizonMs: 900,
+        simStepMs: 130,
+        turnOptions: [-0.6, -0.3, 0, 0.3, 0.6],
+        randomness: 0.2,
+        maxSpeedFactor: 0.64,
+        collisionPenalty: 880,
+        wallPenalty: 1250,
+        attackWeight: 6,
+        playerProximityPenalty: 80,
+        proximitySoftRadius: 24,
+        jumpAggressiveness: 0.35,
+        jumpWindow: [360, 860],
+        jumpLeadMs: 140,
+        arenaMargin: 55,
+        turnResponsiveness: 0.9,
+        trailAvoidanceRadius: 5.2
+      },
+      normal: {
+        decisionInterval: 280,
+        planHorizonMs: 1150,
+        simStepMs: 105,
+        turnOptions: [-0.75, -0.5, -0.25, 0, 0.25, 0.5, 0.75],
+        randomness: 0.14,
+        maxSpeedFactor: 0.64,
+        collisionPenalty: 1150,
+        wallPenalty: 1550,
+        attackWeight: 12,
+        playerProximityPenalty: 110,
+        proximitySoftRadius: 20,
+        jumpAggressiveness: 0.55,
+        jumpWindow: [300, 760],
+        jumpLeadMs: 120,
+        arenaMargin: 45,
+        turnResponsiveness: 1.12,
+        trailAvoidanceRadius: 4.6
+      },
+      hard: {
+        decisionInterval: 200,
+        planHorizonMs: 1350,
+        simStepMs: 95,
+        turnOptions: [-0.9, -0.6, -0.3, 0, 0.3, 0.6, 0.9],
+        randomness: 0.09,
+        maxSpeedFactor: 0.64,
+        collisionPenalty: 1350,
+        wallPenalty: 1800,
+        attackWeight: 18,
+        playerProximityPenalty: 130,
+        proximitySoftRadius: 17,
+        jumpAggressiveness: 0.75,
+        jumpWindow: [260, 700],
+        jumpLeadMs: 95,
+        arenaMargin: 40,
+        turnResponsiveness: 1.3,
+        trailAvoidanceRadius: 4.3
+      }
+    };
+
+    const config = difficultyMap[this.aiDifficulty] || difficultyMap.normal;
+
+    const minSpeedFactor = Math.max(0.3, config.maxSpeedFactor * 0.45);
+
+    this.aiParams = {
+      ...config,
+      decisionInterval: config.decisionInterval,
+      planHorizonMs: config.planHorizonMs,
+      simStepMs: config.simStepMs,
+      turnOptions: config.turnOptions,
+      randomness: config.randomness,
+      collisionPenalty: config.collisionPenalty,
+      wallPenalty: config.wallPenalty,
+      attackWeight: config.attackWeight,
+      playerProximityPenalty: config.playerProximityPenalty,
+      proximitySoftRadius: config.proximitySoftRadius,
+      proximitySoftRadiusSq: config.proximitySoftRadius * config.proximitySoftRadius,
+      jumpAggressiveness: config.jumpAggressiveness,
+      jumpWindow: config.jumpWindow,
+      jumpLeadMs: config.jumpLeadMs,
+      arenaMargin: config.arenaMargin,
+      turnResponsiveness: config.turnResponsiveness,
+      trailAvoidanceRadius: config.trailAvoidanceRadius,
+      trailAvoidanceRadiusSq: config.trailAvoidanceRadius * config.trailAvoidanceRadius,
+      maxSpeed: this.MAX * config.maxSpeedFactor,
+      minSpeed: this.MAX * minSpeedFactor
+    };
 
     console.log(`AI difficulty set to ${this.aiDifficulty}`, this.aiParams);
   }
 
-  // Update the updateAI method in TronGame class
+  // Updated AI planner for the single-player opponent
   updateAI() {
     if (!this.singlePlayerMode) return;
 
     const now = Date.now();
 
-    // Add initialization to ensure AI at least moves forward at start
     if (!this.aiInitialized) {
-      console.log("Initializing AI movement");
-      this.opponent.speed = this.aiParams.maxSpeed * 0.5; // Start at half speed
-      this.aiState.targetHeading = this.opponent.angle; // Initialize target heading
-
       this.aiInitialized = true;
-
-      // Force the opponent to move a bit to activate trail
+      this.opponent.speed = BABYLON.Scalar.Clamp(
+        this.aiParams.maxSpeed * 0.6,
+        this.aiParams.minSpeed,
+        this.aiParams.maxSpeed
+      );
+      this.aiState.targetHeading = this.opponent.angle;
+      this.aiState.desiredSpeed = this.opponent.speed;
+      this.aiState.mode = 'explore';
+      this.aiState.dangerLevel = 0;
+      this.aiState.nearestHazard = null;
+      this.aiState.pendingJump = null;
+      this.aiState.lastDecisionTime = now - this.aiParams.decisionInterval;
       if (this.opponent.trail) {
         this.opponent.trail.setEnabled(true);
         this.opponent.trail.visibility = 1;
       }
     }
 
-    // Only make decisions at the specified interval
-    if (now - this.lastAIDecision >= this.aiParams.reactionTime) {
-      this.lastAIDecision = now;
-
-      // Reset AI state for new decision
-      this.aiState.danger = false;
-      this.aiState.jumpNeeded = false;
-      this.aiState.dangerDirections = [];
-
-      // AI movement logic
-      this.updateAIMovement();
-    }
-
-    // Add direct movement code here to ensure the opponent moves every frame
-    // This is critical for making the AI move
     const dt = this.engine.getDeltaTime() / 900;
 
-    // NEW SYSTEM: Smooth interpolation toward target heading
-    // Calculate the shortest angular difference
-    let angleDiff = this.aiState.targetHeading - this.opponent.angle;
+    if (now - this.aiState.lastDecisionTime >= this.aiParams.decisionInterval) {
+      const decision = this.planAIDecision(now);
+      this.aiState.lastDecisionTime = now;
+      this.aiState.targetHeading = decision.targetHeading;
+      this.aiState.desiredSpeed = decision.desiredSpeed;
+      this.aiState.mode = decision.mode;
+      this.aiState.dangerLevel = decision.dangerLevel;
+      this.aiState.nearestHazard = decision.nearestHazard;
+      this.aiState.trailDistanceSq = decision.trailDistanceSq;
 
-    // Normalize to -PI to PI range
-    while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
-    while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
-
-    // Smooth turn toward target (lerp with speed-based factor)
-    // Turn faster when difference is large, slower when close
-    const turnSpeed = 1.0; // Responsiveness factor (reduced from 2.5 for smoother turns)
-    const maxTurnPerFrame = this.TURN * turnSpeed * dt;
-
-    if (Math.abs(angleDiff) > 0.01) { // Only turn if there's significant difference
-      const turnAmount = Math.max(-maxTurnPerFrame, Math.min(maxTurnPerFrame, angleDiff * 1.5));
-      this.opponent.angle += turnAmount;
+      const previousPendingJump = this.aiState.pendingJump;
+      let nextPendingJump = decision.pendingJump;
+      if (!nextPendingJump && previousPendingJump && now <= previousPendingJump.executeAt + 400) {
+        nextPendingJump = previousPendingJump;
+      }
+      this.aiState.pendingJump = nextPendingJump;
+      this.aiDebugData = decision.debug;
     }
 
-    // Update position with current direction and speed
-    this.opponent.node.rotation.y = -this.opponent.angle + Math.PI / 2;
-
-    // Adjust speed based on context - more nuanced speed changes
-    const targetSpeed = this.aiParams.maxSpeed;
-
-    // Calculate how sharp the turn is
-    const turnSharpness = Math.abs(angleDiff);
-
-    if (this.aiState.danger && this.aiState.dangerDirections.some(d => d.distance < 15)) {
-      // Slow down significantly in dangerous situations
-      const dangerSpeed = this.MAX * 0.4;
-      this.opponent.speed = Math.max(dangerSpeed, this.opponent.speed - this.ACC * dt * 2);
-    } else if (turnSharpness > 0.5) {
-      // Slow down when making sharp turns (>28 degrees)
-      const turnSpeed = this.MAX * 0.65;
-      if (this.opponent.speed > turnSpeed) {
-        this.opponent.speed -= this.ACC * dt * 1.5;
+    if (this.aiState.pendingJump) {
+      if (now - this.aiState.pendingJump.executeAt > 500) {
+        this.aiState.pendingJump = null;
+      } else if (now >= this.aiState.pendingJump.executeAt && this.canOpponentJump(now)) {
+        this.handleOpponentJump();
+        this.aiState.pendingJump = null;
       }
-    } else if (turnSharpness > 0.2) {
-      // Slow down slightly for moderate turns (>11 degrees)
-      const turnSpeed = this.MAX * 0.80;
-      if (this.opponent.speed > turnSpeed) {
-        this.opponent.speed -= this.ACC * dt * 0.5;
+    }
+
+    this.applyAIMovement(dt);
+  }
+
+  planAIDecision(now) {
+    const startPos = this.opponent.node.position.clone();
+    const startAngle = this.opponent.angle;
+    const playerPos = this.player.node.position.clone();
+    const baseSpeed = BABYLON.Scalar.Clamp(
+      this.opponent.speed || this.aiParams.maxSpeed * 0.6,
+      this.aiParams.minSpeed,
+      this.aiParams.maxSpeed
+    );
+    const initialPlayerDistance = BABYLON.Vector3.Distance(startPos, playerPos);
+    const horizonDistance = Math.max(25, this.aiParams.maxSpeed * (this.aiParams.planHorizonMs / 1000));
+    const candidates = [];
+
+    for (const turnOption of this.aiParams.turnOptions) {
+      const candidate = this.simulateAICandidate(turnOption, startPos, startAngle, baseSpeed, playerPos, now);
+      candidate.score = this.scoreCandidate(candidate, initialPlayerDistance, horizonDistance);
+      candidate.score += (Math.random() - 0.5) * this.aiParams.randomness * 100;
+      candidates.push(candidate);
+    }
+
+    let best = null;
+    for (const candidate of candidates) {
+      if (!best || candidate.score > best.score) {
+        best = candidate;
+      }
+    }
+
+    if (!best) {
+      best = this.simulateAICandidate(0, startPos, startAngle, baseSpeed, playerPos, now);
+      best.score = 0;
+    }
+
+    let dangerLevel = 0;
+    let nearestHazard = null;
+    let pendingJump = null;
+
+    if (best.hazard) {
+      const hazardDistance = Math.max(best.hazard.distance, 0.01);
+      const hazardDanger = BABYLON.Scalar.Clamp(1 - (hazardDistance / Math.max(horizonDistance, 1)), 0, 1);
+      dangerLevel = Math.max(dangerLevel, hazardDanger);
+      nearestHazard = {
+        type: best.hazard.type,
+        distance: best.hazard.distance,
+        time: best.hazard.time
+      };
+
+      if (best.pendingJump && this.canOpponentJump(now)) {
+        pendingJump = {
+          ...best.pendingJump,
+          executeAt: Math.max(now + 30, best.pendingJump.executeAt)
+        };
+      }
+    }
+
+    const trailDistanceSq = (best.minTrailDistanceSq !== undefined) ? best.minTrailDistanceSq : Infinity;
+    if (trailDistanceSq < Infinity && this.aiParams.trailAvoidanceRadius) {
+      const trailDistance = Math.sqrt(Math.max(trailDistanceSq, 0.0001));
+      const softRadius = this.aiParams.trailAvoidanceRadius * 1.2;
+      if (trailDistance < softRadius) {
+        const trailDanger = BABYLON.Scalar.Clamp(1 - (trailDistance / softRadius), 0, 1);
+        dangerLevel = Math.max(dangerLevel, trailDanger);
+      }
+    }
+
+    if (this.aiParams.proximitySoftRadius && best.finalPlayerDistance < this.aiParams.proximitySoftRadius) {
+      const proximityDanger = BABYLON.Scalar.Clamp(
+        1 - (best.finalPlayerDistance / this.aiParams.proximitySoftRadius),
+        0,
+        1
+      );
+      dangerLevel = Math.max(dangerLevel, proximityDanger * 0.85);
+    }
+
+    const desiredSpeed = BABYLON.Scalar.Clamp(
+      best.desiredSpeed || baseSpeed,
+      this.aiParams.minSpeed,
+      this.aiParams.maxSpeed
+    );
+
+    const mode = dangerLevel > 0.6 ? 'evade' : (best.closesGap ? 'attack' : 'explore');
+
+    return {
+      targetHeading: this.normalizeAngle(best.projectedAngle),
+      desiredSpeed,
+      dangerLevel,
+      nearestHazard,
+      pendingJump,
+      mode,
+      trailDistanceSq,
+      debug: {
+        candidates: candidates.map(({ turnInput, score, hazard, minTrailDistanceSq }) => ({
+          turnInput,
+          score,
+          hazard: hazard ? { type: hazard.type, distance: hazard.distance } : null,
+          minTrailDistance: (minTrailDistanceSq !== undefined && minTrailDistanceSq < Infinity)
+            ? Math.sqrt(Math.max(minTrailDistanceSq, 0))
+            : null
+        }))
+      }
+    };
+  }
+
+  simulateAICandidate(turnInput, startPos, startAngle, baseSpeed, playerPos, now) {
+    const stepSeconds = this.aiParams.simStepMs / 1000;
+    const totalSteps = Math.max(1, Math.floor(this.aiParams.planHorizonMs / this.aiParams.simStepMs));
+    const horizonDistance = Math.max(25, this.aiParams.maxSpeed * (this.aiParams.planHorizonMs / 1000));
+    let pos = startPos.clone();
+    let angle = startAngle;
+    let speed = baseSpeed;
+    let distanceTravelled = 0;
+    let elapsed = 0;
+    let hazard = null;
+    let pendingJump = null;
+    let minTrailDistanceSq = Infinity;
+
+    for (let i = 0; i < totalSteps; i++) {
+      const turnIntensity = Math.abs(turnInput);
+      const targetTurnSpeed = this.aiParams.maxSpeed * (1 - 0.35 * turnIntensity);
+      if (speed > targetTurnSpeed) {
+        speed = Math.max(this.aiParams.minSpeed, speed - this.ACC * stepSeconds * (0.6 + turnIntensity));
+      } else if (speed < targetTurnSpeed) {
+        speed = Math.min(this.aiParams.maxSpeed, speed + this.ACC * stepSeconds * 0.45);
+      }
+
+      angle += turnInput * this.TURN * stepSeconds;
+
+      const direction = this.direction(angle);
+      const movement = direction.scale(speed * stepSeconds);
+      const segmentLength = movement.length();
+      const nextPos = pos.add(movement);
+
+      elapsed += stepSeconds;
+      distanceTravelled += segmentLength;
+
+      if (!this.isInsideArena(nextPos, this.aiParams.arenaMargin)) {
+        hazard = { type: 'wall', distance: distanceTravelled, time: elapsed };
+        pos = nextPos;
+        break;
+      }
+
+      let breakLoop = false;
+
+      if (!hazard) {
+        const hazardHit = this.castHazardRay(pos, movement);
+        if (hazardHit) {
+          const segmentOffset = Math.min(segmentLength, hazardHit.distanceAlongSegment);
+          const hazardDistance = Math.max(0, distanceTravelled - segmentLength + segmentOffset);
+          hazard = {
+            type: hazardHit.type,
+            distance: hazardDistance,
+            time: elapsed
+          };
+
+          if (hazard.type === 'playerTrail') {
+            const hazardMs = hazard.time * 1000;
+            const [jumpMin, jumpMax] = this.aiParams.jumpWindow;
+            if (hazardMs >= jumpMin && hazardMs <= jumpMax && this.canOpponentJump(now)) {
+              pendingJump = {
+                executeAt: now + Math.max(hazardMs - this.aiParams.jumpLeadMs, 0),
+                hazardType: hazard.type,
+                hazardDistance: hazardDistance,
+                hazardTimeMs: hazardMs
+              };
+            }
+          }
+
+          breakLoop = true;
+        }
+      }
+
+      const trailDistSq = this.getTrailDistanceSquared('player', nextPos);
+      if (trailDistSq < minTrailDistanceSq) {
+        minTrailDistanceSq = trailDistSq;
+      }
+
+      if (!hazard &&
+          this.aiParams.trailAvoidanceRadiusSq !== undefined &&
+          trailDistSq <= this.aiParams.trailAvoidanceRadiusSq) {
+        hazard = {
+          type: 'playerTrail',
+          distance: distanceTravelled,
+          time: elapsed
+        };
+
+        const hazardMs = hazard.time * 1000;
+        const [jumpMin, jumpMax] = this.aiParams.jumpWindow;
+        if (hazardMs >= jumpMin && hazardMs <= jumpMax && this.canOpponentJump(now)) {
+          pendingJump = {
+            executeAt: now + Math.max(hazardMs - this.aiParams.jumpLeadMs, 0),
+            hazardType: 'playerTrail',
+            hazardDistance: distanceTravelled,
+            hazardTimeMs: hazardMs
+          };
+        }
+
+        breakLoop = true;
+      }
+
+      pos = nextPos;
+
+      if (breakLoop || distanceTravelled >= horizonDistance) {
+        break;
+      }
+    }
+
+    const finalPlayerDistance = BABYLON.Vector3.Distance(pos, playerPos);
+    const closesGap = finalPlayerDistance < BABYLON.Vector3.Distance(startPos, playerPos) - 3;
+
+    let desiredSpeed = this.aiParams.maxSpeed;
+    if (hazard) {
+      const proximityFactor = BABYLON.Scalar.Clamp(hazard.distance / (this.aiParams.maxSpeed * 0.9), 0, 1);
+      desiredSpeed = BABYLON.Scalar.Lerp(this.aiParams.minSpeed, this.aiParams.maxSpeed * 0.85, proximityFactor);
+    }
+
+    return {
+      turnInput,
+      freeDistance: Math.min(distanceTravelled, horizonDistance),
+      hazard,
+      projectedAngle: angle,
+      finalPosition: pos,
+      finalPlayerDistance,
+      closesGap,
+      pendingJump,
+      desiredSpeed,
+      minTrailDistanceSq
+    };
+  }
+
+  scoreCandidate(candidate, initialPlayerDistance, horizonDistance) {
+    const proximityPenalty = this.aiParams.playerProximityPenalty || 0;
+    const avoidanceRadius = this.aiParams.trailAvoidanceRadius || 0;
+    const travelScore = (candidate.freeDistance / Math.max(horizonDistance, 1)) * 600;
+    let score = travelScore;
+
+    if (candidate.hazard) {
+      const hazardWeight = 0.4 + (Math.max(horizonDistance - candidate.hazard.distance, 0) / Math.max(horizonDistance, 1));
+      score -= this.aiParams.collisionPenalty * hazardWeight;
+      if (candidate.hazard.type === 'wall') {
+        score -= this.aiParams.wallPenalty;
+      } else if (candidate.hazard.type === 'selfTrail') {
+        score -= this.aiParams.collisionPenalty * 0.7;
+      } else if (candidate.hazard.type === 'playerBike') {
+        score -= this.aiParams.collisionPenalty * 0.9;
+      } else if (candidate.hazard.type === 'playerTrail') {
+        score -= this.aiParams.collisionPenalty * 0.35;
       }
     } else {
-      // Accelerate smoothly to target speed when going straight
-      if (this.opponent.speed < targetSpeed) {
-        this.opponent.speed = Math.min(targetSpeed, this.opponent.speed + this.ACC * dt);
-      } else {
-        this.opponent.speed = Math.max(targetSpeed, this.opponent.speed - this.ACC * dt * 0.3);
+      score += 140;
+    }
+
+    if (avoidanceRadius &&
+        candidate.minTrailDistanceSq !== undefined &&
+        candidate.minTrailDistanceSq < Infinity) {
+      const minTrailDistance = Math.sqrt(Math.max(candidate.minTrailDistanceSq, 0));
+      if (minTrailDistance < avoidanceRadius) {
+        const avoidanceFactor =
+          (avoidanceRadius - minTrailDistance) / avoidanceRadius;
+        score -= avoidanceFactor * proximityPenalty * 2.2;
       }
     }
 
-    // Apply changes to position (THIS IS THE CRITICAL LINE FOR MOVEMENT)
+    const attackDelta = initialPlayerDistance - candidate.finalPlayerDistance;
+    if (attackDelta > 0) {
+      score += attackDelta * this.aiParams.attackWeight;
+    } else {
+      score += attackDelta * (this.aiParams.attackWeight * 0.25);
+    }
+
+    if (this.aiParams.proximitySoftRadius &&
+        candidate.finalPlayerDistance < this.aiParams.proximitySoftRadius) {
+      const proximityFactor =
+        (this.aiParams.proximitySoftRadius - candidate.finalPlayerDistance) / this.aiParams.proximitySoftRadius;
+      score -= proximityFactor * proximityPenalty;
+    }
+
+    if (candidate.closesGap &&
+        (!candidate.hazard || candidate.hazard.type === 'none') &&
+        this.aiParams.trailAvoidanceRadiusSq !== undefined &&
+        candidate.minTrailDistanceSq > this.aiParams.trailAvoidanceRadiusSq) {
+      score += 40;
+    }
+
+    if (candidate.pendingJump && candidate.pendingJump.hazardType === 'playerTrail') {
+      score += this.aiParams.jumpAggressiveness * 90;
+    }
+
+    return score;
+  }
+
+  applyAIMovement(dt) {
+    const targetHeading = this.aiState.targetHeading || this.opponent.angle;
+    const angleDiff = this.normalizeAngle(targetHeading - this.opponent.angle);
+    const maxTurnPerFrame = this.TURN * this.aiParams.turnResponsiveness * dt;
+    const turnStep = BABYLON.Scalar.Clamp(angleDiff, -maxTurnPerFrame, maxTurnPerFrame);
+
+    this.opponent.angle += turnStep;
+    this.opponent.node.rotation.y = -this.opponent.angle + Math.PI / 2;
+
+    const dangerLevel = this.aiState.dangerLevel || 0;
+    let desiredSpeed = this.aiState.desiredSpeed || this.aiParams.maxSpeed;
+
+    if (dangerLevel > 0.75) {
+      desiredSpeed = Math.min(desiredSpeed, this.aiParams.maxSpeed * 0.5);
+    } else if (dangerLevel > 0.45) {
+      desiredSpeed = Math.min(desiredSpeed, this.aiParams.maxSpeed * 0.7);
+    }
+
+    if (this.aiState.nearestHazard) {
+      if (this.aiState.nearestHazard.type === 'playerTrail') {
+        desiredSpeed = Math.min(desiredSpeed, this.aiParams.maxSpeed * 0.55);
+      } else if (this.aiState.nearestHazard.type === 'wall') {
+        desiredSpeed = Math.min(desiredSpeed, this.aiParams.maxSpeed * 0.6);
+      }
+    }
+
+    if (this.aiParams.trailAvoidanceRadius &&
+        this.aiState.trailDistanceSq !== undefined &&
+        this.aiState.trailDistanceSq < Infinity) {
+      const trailDistance = Math.sqrt(Math.max(this.aiState.trailDistanceSq, 0));
+      if (trailDistance < this.aiParams.trailAvoidanceRadius * 1.1) {
+        desiredSpeed = Math.min(desiredSpeed, this.aiParams.maxSpeed * 0.5);
+      } else if (trailDistance < this.aiParams.trailAvoidanceRadius * 1.6) {
+        desiredSpeed = Math.min(desiredSpeed, this.aiParams.maxSpeed * 0.7);
+      }
+    }
+
+    desiredSpeed = BABYLON.Scalar.Clamp(desiredSpeed, this.aiParams.minSpeed, this.aiParams.maxSpeed);
+
+    if (this.opponent.speed < desiredSpeed) {
+      this.opponent.speed = Math.min(desiredSpeed, this.opponent.speed + this.ACC * dt);
+    } else if (this.opponent.speed > desiredSpeed) {
+      this.opponent.speed = Math.max(desiredSpeed, this.opponent.speed - this.ACC * dt * 1.35);
+    }
+
     const movement = this.direction(this.opponent.angle).scale(this.opponent.speed * dt);
     this.opponent.node.position.addInPlace(movement);
 
-    // Calculate opponent roll angle based on turn sharpness
     if (this.opponent.modelNode) {
-      // Roll based on angular difference (normalized)
-      const rollAmount = Math.max(-1, Math.min(1, angleDiff * 2));
-      const opponentTargetRoll = rollAmount * this.ROLL_MAX;
-
-      // Smoothly interpolate opponent roll
+      const rollTarget = BABYLON.Scalar.Clamp(-turnStep * 8, -this.ROLL_MAX, this.ROLL_MAX);
       this.opponentPhysics.rollAngle = BABYLON.Scalar.Lerp(
         this.opponentPhysics.rollAngle,
-        opponentTargetRoll,
+        rollTarget,
         dt * this.ROLL_SPEED
       );
-
-      // Apply roll to opponent model
       this.opponent.modelNode.rotation.z = this.opponentPhysics.rollAngle;
     }
-
-    // Debug log occasionally
-    if (Math.random() < 0.02) {
-      const currentHeading = (this.opponent.angle * 180 / Math.PI).toFixed(0);
-      const targetHeadingDeg = (this.aiState.targetHeading * 180 / Math.PI).toFixed(0);
-      const angleDiff = this.aiState.targetHeading - this.opponent.angle;
-      console.log(`AI: pos(${this.opponent.node.position.x.toFixed(1)}, ${this.opponent.node.position.z.toFixed(1)}), ` +
-                  `heading: ${currentHeading}° → target: ${targetHeadingDeg}° (diff: ${(angleDiff * 180 / Math.PI).toFixed(1)}°), ` +
-                  `spd: ${this.opponent.speed.toFixed(1)}`);
-    }
-  }
-  
-
-  // Add method for AI movement and pathfinding
-  updateAIMovement() {
-    // Get opponent position
-    const position = this.opponent.node.position.clone();
-
-    // All difficulties use the new target heading system
-    this.updateAIMovementNormal(position);
   }
 
-  // Human-like AI behavior for normal difficulty
-  updateAIMovementNormal(position) {
-    // Initialize state tracking if not exists
-    if (!this.aiState.normalState) {
-      this.aiState.normalState = {
-        lastDirectionChange: Date.now(),
-        currentPattern: 'explore',
-        turnDuration: 0,
-        explorationTarget: this.opponent.angle
-      };
+  castHazardRay(origin, movement) {
+    if (!this.scene) {
+      return null;
     }
 
-    const normalState = this.aiState.normalState;
-    const currentDir = this.direction(this.opponent.angle);
-    const lookDistance = this.aiParams.lookAhead;
-
-    // PREDICTIVE WALL COLLISION - Check if current trajectory will hit wall
-    const projectionTime = 2.0;
-    const projectedDistance = this.opponent.speed * projectionTime;
-    const projectedPos = position.clone().add(currentDir.scale(projectedDistance));
-
-    const wallMargin = 50;
-    const willHitWall = Math.abs(projectedPos.x) > (this.ARENA / 2 - wallMargin) ||
-                        Math.abs(projectedPos.z) > (this.ARENA / 2 - wallMargin);
-
-    // Check for immediate obstacles in front and sides (like a human would see)
-    const checkAngles = [-Math.PI/3, -Math.PI/6, 0, Math.PI/6, Math.PI/3]; // Left, half-left, front, half-right, right
-    let frontDanger = false;
-    let leftDanger = false;
-    let rightDanger = false;
-    let closestObstacle = Infinity;
-
-    // Also check ahead for player trail to anticipate jumps
-    const jumpLookAhead = 35; // Look further ahead for jump opportunities
-    let playerTrailAhead = false;
-    let playerTrailDistance = Infinity;
-
-    for (let i = 0; i < checkAngles.length; i++) {
-      const checkAngle = this.opponent.angle + checkAngles[i];
-      const direction = new BABYLON.Vector3(Math.cos(checkAngle), 0, Math.sin(checkAngle));
-
-      // Check at normal distance for obstacles
-      const ray = new BABYLON.Ray(position.clone(), direction, lookDistance);
-      const predicate = (mesh) => {
-        return mesh !== this.opponent.node &&
-               mesh !== this.opponent.placeholder &&
-               mesh !== this.opponent.trail;
-      };
-
-      const hit = this.scene.pickWithRay(ray, predicate);
-
-      if (hit.hit) {
-        this.aiState.danger = true;
-        closestObstacle = Math.min(closestObstacle, hit.distance);
-
-        if (i === 2) frontDanger = true; // Front
-        if (i < 2) leftDanger = true; // Left side
-        if (i > 2) rightDanger = true; // Right side
-      }
-
-      // Check further ahead specifically for player trail to anticipate jumps
-      if (i === 2) { // Only check straight ahead for jumps
-        const jumpRay = new BABYLON.Ray(position.clone(), direction, jumpLookAhead);
-        const jumpHit = this.scene.pickWithRay(jumpRay, predicate);
-
-        if (jumpHit.hit && jumpHit.pickedMesh === this.player.trail) {
-          playerTrailAhead = true;
-          playerTrailDistance = jumpHit.distance;
-        }
-      }
+    const length = movement.length();
+    if (length < 0.1) {
+      return null;
     }
 
-    // Anticipatory jumping logic - jump when player trail is ahead
-    if (playerTrailAhead && !this.opponentPhysics.jumping) {
-      // Jump earlier based on speed and distance
-      const timeToCollision = playerTrailDistance / this.opponent.speed;
+    const direction = movement.normalize();
+    const rayOrigin = origin.add(direction.scale(1.2));
+    const ray = new BABYLON.Ray(rayOrigin, direction, length + 2);
 
-      // Jump if collision within 0.8-1.2 seconds (gives time to jump over)
-      if (timeToCollision < 1.2 && timeToCollision > 0.3) {
-        this.aiState.jumpNeeded = true;
-      }
+    const hit = this.scene.pickWithRay(ray, mesh => this.isHazardMesh(mesh));
+    if (!hit || !hit.hit) {
+      return null;
     }
 
-    // Detect player proximity (evasion behavior)
-    const playerPos = this.player.node.position;
-    const distanceToPlayer = BABYLON.Vector3.Distance(position, playerPos);
-    const playerDir = playerPos.subtract(position).normalize();
-    const playerDot = BABYLON.Vector3.Dot(currentDir, playerDir);
-
-    // Check if player is nearby (within visual range)
-    const playerNearby = distanceToPlayer < 80;
-    const playerAhead = playerDot > 0.3; // Player is somewhat ahead
-    const playerBehind = playerDot < -0.3; // Player is behind
-
-    // Detect if player is approaching (getting closer)
-    if (!this.aiState.lastPlayerDistance) {
-      this.aiState.lastPlayerDistance = distanceToPlayer;
+    if (hit.distance <= 0.6) {
+      return null;
     }
-    const playerApproaching = distanceToPlayer < this.aiState.lastPlayerDistance - 2;
-    this.aiState.lastPlayerDistance = distanceToPlayer;
 
-    // Check boundaries with much larger margin
-    // Decision making (human-like behavior)
-    const now = Date.now();
-    const timeSinceLastChange = now - normalState.lastDirectionChange;
+    const hazardType = this.classifyHazard(hit.pickedMesh);
+    if (hazardType === 'none') {
+      return null;
+    }
 
-    // Helper function to calculate heading toward a direction vector
-    const calculateHeading = (directionVector) => {
-      return Math.atan2(directionVector.z, directionVector.x);
+    return {
+      type: hazardType,
+      distanceAlongSegment: Math.max(0.01, hit.distance - 1.2)
     };
+  }
 
-    // PRIORITY 1: Predictive wall avoidance - HIGHEST PRIORITY
-    if (willHitWall) {
-      // Only set a new target if we're not already evading walls
-      // This prevents constantly resetting the target with new random offsets
-      if (normalState.currentPattern !== 'evade-wall' || timeSinceLastChange > 1500) {
-        // Calculate heading toward center
-        const toCenter = new BABYLON.Vector3(0, 0, 0).subtract(position).normalize();
-        const centerHeading = calculateHeading(toCenter);
+  isHazardMesh(mesh) {
+    return this.classifyHazard(mesh) !== 'none';
+  }
 
-        // Add slight randomness for natural behavior (±10 degrees)
-        const randomOffset = (Math.random() - 0.5) * 0.35;
-        this.aiState.targetHeading = centerHeading + randomOffset;
+  classifyHazard(mesh) {
+    if (!mesh) return 'none';
 
-        normalState.currentPattern = 'evade-wall';
-        normalState.lastDirectionChange = now;
-      }
-    }
-    // PRIORITY 2: Avoid immediate obstacles
-    else if (frontDanger && closestObstacle < 25) {
-      // Only set a new target if we're not already evading obstacles
-      if (normalState.currentPattern !== 'evade-obstacle' || timeSinceLastChange > 1000) {
-        // Turn away from obstacles - pick the clearer side
-        if (leftDanger && !rightDanger) {
-          // Turn right (clockwise)
-          this.aiState.targetHeading = this.opponent.angle - Math.PI / 3; // 60° right
-        } else if (rightDanger && !leftDanger) {
-          // Turn left (counter-clockwise)
-          this.aiState.targetHeading = this.opponent.angle + Math.PI / 3; // 60° left
-        } else {
-          // Both sides blocked - make a sharp turn randomly
-          const turnDirection = Math.random() > 0.5 ? 1 : -1;
-          this.aiState.targetHeading = this.opponent.angle + (turnDirection * Math.PI / 2);
-        }
+    if (mesh === this.player.trail) return 'playerTrail';
+    if (mesh === this.opponent.trail) return 'selfTrail';
 
-        // Add slight randomness (±15 degrees)
-        this.aiState.targetHeading += (Math.random() - 0.5) * 0.52;
-
-        normalState.currentPattern = 'evade-obstacle';
-        normalState.lastDirectionChange = now;
-      }
-    }
-    // PRIORITY 3: Evade player when nearby and approaching
-    else if (playerNearby && playerApproaching && playerAhead) {
-      // Only set a new target if we're not already evading player
-      if (normalState.currentPattern !== 'evade-player' || timeSinceLastChange > 1000) {
-        // Calculate perpendicular direction to player
-        const perpVector = new BABYLON.Vector3(-playerDir.z, 0, playerDir.x); // 90° rotation
-        const cross = BABYLON.Vector3.Cross(currentDir, playerDir);
-
-        // Choose which perpendicular direction to use
-        if (Math.sign(cross.y) < 0) {
-          perpVector.scaleInPlace(-1); // Use the other perpendicular
-        }
-
-        const evadeHeading = calculateHeading(perpVector);
-        this.aiState.targetHeading = evadeHeading + (Math.random() - 0.5) * 0.3;
-
-        normalState.currentPattern = 'evade-player';
-        normalState.lastDirectionChange = now;
-      }
-    }
-    // PRIORITY 4: Random exploration and pattern changes (human-like wandering)
-    else {
-      // Default: maintain current heading
-      if (!normalState.explorationTarget) {
-        normalState.explorationTarget = this.opponent.angle;
-      }
-      this.aiState.targetHeading = normalState.explorationTarget;
-
-      // Change direction every 3 seconds for variety
-      if (timeSinceLastChange > 3000) {
-        // Time to make a new decision
-        const rand = Math.random();
-
-        if (rand < 0.5) {
-          // Go straight - keep current heading
-          normalState.explorationTarget = this.opponent.angle;
-        } else if (rand < 0.85) {
-          // Make a gentle turn (±30 degrees)
-          const turnAmount = (Math.random() - 0.5) * 1.05;
-          normalState.explorationTarget = this.opponent.angle + turnAmount;
-        } else {
-          // Occasional sharper turn (±60 degrees)
-          const turnAmount = (Math.random() - 0.5) * 2.09;
-          normalState.explorationTarget = this.opponent.angle + turnAmount;
-        }
-
-        this.aiState.targetHeading = normalState.explorationTarget;
-        normalState.lastDirectionChange = now;
-      }
+    if (mesh === this.player.node || mesh === this.player.placeholder || mesh === this.player.modelNode) {
+      return 'playerBike';
     }
 
-    // Decide if jump is needed
-    if (this.aiState.jumpNeeded && !this.opponentPhysics.jumping) {
-      this.handleOpponentJump();
+    if (mesh === this.opponent.node || mesh === this.opponent.placeholder || mesh === this.opponent.modelNode) {
+      return 'none';
+    }
+
+    if (mesh === this.ground || mesh === this.skybox) {
+      return 'none';
+    }
+
+    const name = (mesh.name || '').toLowerCase();
+
+    if (name.includes('wall')) return 'wall';
+    if (name.includes('trail')) {
+      if (mesh.parent === this.player.node) return 'playerTrail';
+      if (mesh.parent === this.opponent.node) return 'selfTrail';
+    }
+    if (name.includes('cycle') || name.includes('bike')) {
+      return 'playerBike';
+    }
+
+    return 'none';
+  }
+
+  isInsideArena(position, margin = 0) {
+    const half = this.ARENA / 2 - margin;
+    return Math.abs(position.x) <= half && Math.abs(position.z) <= half;
+  }
+
+  canOpponentJump(now) {
+    const lastJump = this.opponentPhysics.lastJumpTime || 0;
+    return !this.opponentPhysics.jumping && (now - lastJump) >= this.JUMP_COOLDOWN;
+  }
+
+  normalizeAngle(angle) {
+    return Math.atan2(Math.sin(angle), Math.cos(angle));
+  }
+
+  recordTrailSample(which, position, now) {
+    const history = this.trailHistory[which];
+    if (!history) {
+      return;
+    }
+
+    const sample = { x: position.x, z: position.z };
+    const hasLast = !!history.lastPoint;
+    const movedEnough = !hasLast ||
+      ((sample.x - history.lastPoint.x) ** 2 + (sample.z - history.lastPoint.z) ** 2 >= this.trailSampleMinDistanceSq);
+    const elapsed = now - (history.lastSampleTime || 0);
+
+    if (hasLast && !movedEnough && elapsed < this.trailSampleInterval) {
+      return;
+    }
+
+    history.lastPoint = sample;
+    history.lastSampleTime = now;
+    history.points.push(sample);
+
+    if (history.points.length > this.trailMaxSamples) {
+      history.points.splice(0, history.points.length - this.trailMaxSamples);
     }
   }
 
+  getTrailDistanceSquared(which, position) {
+    const history = this.trailHistory[which];
+    if (!history || history.points.length === 0) {
+      return Infinity;
+    }
+
+    const px = position.x;
+    const pz = position.z;
+    let min = Infinity;
+
+    for (let i = history.points.length - 1; i >= 0; i--) {
+      const point = history.points[i];
+      const dx = px - point.x;
+      const dz = pz - point.z;
+      const distSq = dx * dx + dz * dz;
+      if (distSq < min) {
+        min = distSq;
+        if (min <= 1) {
+          break;
+        }
+      }
+    }
+
+    return min;
+  }
 
 
   update() {
@@ -1658,6 +1938,10 @@ class TronGame {
       // Apply height to node's Y position
       this.opponent.node.position.y = this.opponentPhysics.height;
     }
+
+    const trailSampleTime = Date.now();
+    this.recordTrailSample('player', this.player.node.position, trailSampleTime);
+    this.recordTrailSample('opponent', this.opponent.node.position, trailSampleTime);
 
     // Handle collisions with arena boundaries
     if (this.checkBoundaryCollision(this.player)) {
