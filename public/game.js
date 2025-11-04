@@ -491,32 +491,33 @@ class TronGame {
   // Add performance optimization settings based on device with improved compatibility
   setupPerformanceOptions() {
     if (this.isMobile) {
-      console.log("Applying mobile optimizations with improved compatibility");
+      console.log("Applying mobile optimizations with high quality rendering");
 
-      // Use more conservative hardware scaling (1.25 instead of 1.5)
-      this.engine.setHardwareScalingLevel(1.25);
-      
-      // Keep post-processing enabled but simplify settings
+      // Remove hardware scaling to maintain full resolution rendering
+      // This keeps bikes and trails crisp instead of pixelated
+      this.engine.setHardwareScalingLevel(1.0);
+
+      // Keep post-processing enabled with high quality settings
       if (this.renderPipeline) {
-        // Simplify bloom settings for better mobile performance
+        // Use similar bloom settings to desktop for better quality
         this.renderPipeline.bloomEnabled = true;
-        this.renderPipeline.bloomThreshold = 0.4;  // Higher threshold for less processing
-        this.renderPipeline.bloomWeight = 0.5;     // Medium weight for reasonable effect
-        this.renderPipeline.bloomKernel = 32;      // Smaller kernel for performance
-        
-        // Simplify image processing
+        this.renderPipeline.bloomThreshold = 0.35;  // Lower threshold to catch more glow
+        this.renderPipeline.bloomWeight = 0.6;      // Good weight for visible effect
+        this.renderPipeline.bloomKernel = 64;       // Larger kernel for better quality
+
+        // Keep image processing settings
         if (this.renderPipeline.imageProcessing) {
           this.renderPipeline.imageProcessing.vignetteEnabled = true;
-          this.renderPipeline.imageProcessing.vignetteWeight = 0.6;
-          this.renderPipeline.imageProcessing.vignetteBlendMode = 
+          this.renderPipeline.imageProcessing.vignetteWeight = 0.7;
+          this.renderPipeline.imageProcessing.vignetteBlendMode =
             BABYLON.ImageProcessingPostProcess.VIGNETTEMODE_MULTIPLY;
-          this.renderPipeline.imageProcessing.contrast = 1.1;
+          this.renderPipeline.imageProcessing.contrast = 1.15;
         }
       }
-      
+
       // Ensure post-processing is enabled to avoid material rendering issues
       this.scene.postProcessesEnabled = true;
-      
+
       // Enhance material parameters for mobile compatibility
       this.scene.meshes.forEach(mesh => {
         if (mesh.material) {
@@ -524,21 +525,20 @@ class TronGame {
           mesh.material.markAsDirty(BABYLON.Material.TextureDirtyFlag);
         }
       });
-      
+
       // Adjust camera for better mobile view
       if (this.camera) {
-        this.camera.radius = 40; 
+        this.camera.radius = 40;
         this.camera.heightOffset = 12;
       }
-      
-      // Set mobile-specific scene optimizations
+
+      // Set mobile-specific scene optimizations (keep performance tweaks that don't affect quality)
       this.scene.autoClear = true;                       // Clear each frame
       this.scene.autoClearDepthAndStencil = true;        // Clear depth and stencil
       this.scene.skipPointerMovePicking = true;          // Skip pointer picking for performance
       this.scene.constantlyUpdateMeshUnderPointer = false; // Disable constant updates
-      
-      // Ensure renderer has correct modes for mobile
-      this.engine.setHardwareScalingLevel(1.25);         // Apply scaling one more time to ensure it takes
+
+      // Ensure renderer uses full device resolution
       this.engine.adaptToDeviceRatio = true;             // Adapt to device ratio
       this.engine.disablePerformanceMonitorInBackground = true; // Save resources when in background
     }
@@ -601,30 +601,30 @@ class TronGame {
   }
   
   setupGlowLayer() {
-    // Create glow layer with more compatible settings for mobile/desktop
+    // Create glow layer with high quality settings for both mobile and desktop
     try {
-      console.log("Setting up glow layer with optimized settings");
-      
-      // Use smaller kernel size for better cross-platform compatibility
-      this.glowLayer = new BABYLON.GlowLayer("glow", this.scene, { 
-        blurKernelSize: this.isMobile ? 32 : 64,  // Use smaller kernel on mobile
-        mainTextureFixedSize: 512,                // Fixed size for better performance
-        mainTextureRatio: this.isMobile ? 0.5 : 1 // Reduce resolution on mobile
+      console.log("Setting up glow layer with high quality settings");
+
+      // Use high quality settings for crisp rendering on all devices
+      this.glowLayer = new BABYLON.GlowLayer("glow", this.scene, {
+        blurKernelSize: 64,                       // Full quality blur kernel
+        mainTextureFixedSize: 512,                // Fixed size for good performance
+        mainTextureRatio: 1.0                     // Full resolution glow texture
       });
 
-      // Set moderate intensity that works across devices
-      this.glowLayer.intensity = this.isMobile ? 1.0 : 1.5;
+      // Set consistent intensity across devices
+      this.glowLayer.intensity = 1.5;
       
       // Make sure excluded meshes are initialized
       this.glowLayer.excludedMeshes = this.glowLayer.excludedMeshes || [];
 
       // Optimize glow selector for better performance
       this.glowLayer.customEmissiveColorSelector = (mesh, subMesh, material, result) => {
-        if (!material) { 
-          result.set(0, 0, 0, 0); 
-          return; 
+        if (!material) {
+          result.set(0, 0, 0, 0);
+          return;
         }
-        
+
         try {
           // Only calculate glow for relevant meshes to save performance
           if (mesh.name.includes("trail") || mesh.name.includes("bike")) {
@@ -633,8 +633,8 @@ class TronGame {
 
             // Check if material has emissive color
             if (material.emissiveColor) {
-              // Create properly scaled glow based on device
-              const intensity = this.isMobile ? 1.0 : 1.5;
+              // Use consistent high quality glow intensity on all devices
+              const intensity = 1.5;
               result.set(
                 material.emissiveColor.r * alpha * intensity,
                 material.emissiveColor.g * alpha * intensity,
