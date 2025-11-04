@@ -147,55 +147,17 @@ class TronGame {
     new BABYLON.HemisphericLight('L', new BABYLON.Vector3(0, 1, 0), this.scene)
       .intensity = 0.6; // Match playground intensity
     
-    // Create ground - simple flat plane with improved material
-    const ground = BABYLON.MeshBuilder.CreateGround('ground', {
+    // Create temporary ground placeholder (will be replaced by 3D model)
+    this.ground = BABYLON.MeshBuilder.CreateGround('ground', {
       width: this.ARENA,
       height: this.ARENA
     }, this.scene);
-    
-    // Create the classic Tron dark floor with grid
-    try {
-      // Create grid material with dark background and bright lines
-      const gridMaterial = new BABYLON.GridMaterial('gridMat', this.scene);
-      
-      // Set to dark background (almost black) with bright cyan lines
-      gridMaterial.mainColor = new BABYLON.Color3(0.01, 0.01, 0.01);  // Nearly black background
-      gridMaterial.lineColor = new BABYLON.Color3(0, 1.0, 1.0);       // Bright cyan lines
-      
-      // Adjust grid parameters for classic Tron look
-      gridMaterial.gridRatio = 1;                    // Smaller grid for more lines
-      gridMaterial.majorUnitFrequency = 10;         // Major lines every 10 units
-      gridMaterial.minorUnitVisibility = 0.6;       // More visible minor lines
-      gridMaterial.opacity = 1.0;                   // Fully opaque
-      
-      // Add subtle reflections
-      gridMaterial.backFaceCulling = false;
-      gridMaterial.gridOffset = new BABYLON.Vector3(0, 0, 0);
-      
-      // Force material to compute its values right away
-      gridMaterial.freeze();
-      
-      // Apply material to ground
-      ground.material = gridMaterial;
-      
-      console.log("Tron grid material created successfully");
-    } catch (error) {
-      console.error("Error creating grid material:", error);
-      
-      // Fallback to standard material if grid material fails
-      const fallbackMat = new BABYLON.StandardMaterial('fallbackMat', this.scene);
-      fallbackMat.diffuseColor = new BABYLON.Color3(0.01, 0.01, 0.01);  // Nearly black
-      fallbackMat.specularColor = new BABYLON.Color3(0, 0.6, 0.8);      // Cyan specular
-      fallbackMat.emissiveColor = new BABYLON.Color3(0, 0.2, 0.3);      // Slight glow
-      
-      // Create grid lines with diffuse texture
-      const diffuseTexture = new BABYLON.Texture("https://assets.babylonjs.com/textures/grid.png", this.scene);
-      diffuseTexture.uScale = diffuseTexture.vScale = 50;
-      fallbackMat.diffuseTexture = diffuseTexture;
-      
-      // Apply fallback material
-      ground.material = fallbackMat;
-    }
+
+    // Simple dark material as placeholder until model loads
+    const placeholderMat = new BABYLON.StandardMaterial('placeholderMat', this.scene);
+    placeholderMat.diffuseColor = new BABYLON.Color3(0.01, 0.01, 0.01);
+    placeholderMat.emissiveColor = new BABYLON.Color3(0, 0.1, 0.2);
+    this.ground.material = placeholderMat;
     
     // Set player and opponent colors based on player number
     this.playerColor = this.isFirstPlayer ? 
@@ -244,10 +206,11 @@ class TronGame {
     // Apply performance optimizations for device type
     this.setupPerformanceOptions();
     
-    
-    // Load only the light cycle model - with error handling
+
+    // Load 3D models - with error handling
     this.loadCycleModel();
-    
+    this.loadGridModel();
+
     // Start game loop
     this.engine.runRenderLoop(() => this.update());
     window.addEventListener('resize', () => this.engine.resize());
@@ -882,7 +845,126 @@ class TronGame {
       console.error("Error applying models:", error);
     }
   }
-  
+
+  loadGridModel() {
+    console.log("Attempting to load grid model...");
+    const gridUrl = "/assets/tron_grid.glb";
+
+    BABYLON.SceneLoader.ImportMeshAsync("", "", gridUrl, this.scene).then((result) => {
+      console.log("Grid model loaded successfully");
+
+      const gridModel = result.meshes[0];
+
+      // Get the bounding info to determine the model's size
+      const boundingInfo = gridModel.getHierarchyBoundingVectors();
+      const modelSize = boundingInfo.max.subtract(boundingInfo.min);
+
+      // Calculate scale for one tile (1/3 of arena in each dimension = 1/9 total area)
+      const tileSize = this.ARENA / 3; // 200 units per tile
+      const scaleX = tileSize / modelSize.x;
+      const scaleZ = tileSize / modelSize.z;
+      const scale = Math.min(scaleX, scaleZ); // Use uniform scale
+
+      gridModel.scaling = new BABYLON.Vector3(scale, scale, scale);
+
+      // Adjust blue materials to darker blue
+      gridModel.getChildMeshes().forEach(mesh => {
+        if (mesh.material) {
+          const mat = mesh.material;
+
+          // Check if material has blue/cyan emissive or diffuse colors
+          if (mat.emissiveColor) {
+            const e = mat.emissiveColor;
+            // If it's blue-ish (blue > red and blue > green)
+            if (e.b > e.r && e.b > e.g) {
+              // Darken it - reduce to about 30% brightness
+              mat.emissiveColor = new BABYLON.Color3(e.r * 0.3, e.g * 0.3, e.b * 0.3);
+              console.log(`Darkened emissive blue in ${mesh.name}`);
+            }
+          }
+
+          if (mat.diffuseColor) {
+            const d = mat.diffuseColor;
+            // If it's blue-ish (blue > red and blue > green)
+            if (d.b > d.r && d.b > d.g) {
+              // Darken it - reduce to about 30% brightness
+              mat.diffuseColor = new BABYLON.Color3(d.r * 0.3, d.g * 0.3, d.b * 0.3);
+              console.log(`Darkened diffuse blue in ${mesh.name}`);
+            }
+          }
+
+          // For PBR materials, check albedo as well
+          if (mat.albedoColor) {
+            const a = mat.albedoColor;
+            if (a.b > a.r && a.b > a.g) {
+              mat.albedoColor = new BABYLON.Color3(a.r * 0.3, a.g * 0.3, a.b * 0.3);
+              console.log(`Darkened albedo blue in ${mesh.name}`);
+            }
+          }
+        }
+      });
+
+      // Position the grid so its top surface is at y=0 (where bikes drive)
+      const scaledBounds = gridModel.getHierarchyBoundingVectors();
+      const yOffset = -scaledBounds.max.y;
+
+      // Create a parent node to hold all grid tiles
+      const gridParent = new BABYLON.TransformNode("gridParent", this.scene);
+
+      // Create 3x3 grid of tiles
+      for (let row = 0; row < 3; row++) {
+        for (let col = 0; col < 3; col++) {
+          let tile;
+
+          if (row === 0 && col === 0) {
+            // Use the original model for the first tile
+            tile = gridModel;
+          } else {
+            // Clone for other tiles
+            tile = gridModel.clone(`gridTile_${row}_${col}`);
+          }
+
+          // Calculate position for this tile
+          // Positions: -200, 0, +200 for a 600 unit arena
+          const xPos = (col - 1) * tileSize; // col 0,1,2 -> -200, 0, +200
+          const zPos = (row - 1) * tileSize; // row 0,1,2 -> -200, 0, +200
+
+          tile.position.x = xPos;
+          tile.position.z = zPos;
+          tile.position.y = yOffset;
+          tile.parent = gridParent;
+        }
+      }
+
+      console.log(`Created 3x3 grid with ${tileSize}x${tileSize} tiles (scale: ${scale})`);
+      console.log(`Grid tiles positioned at y=${yOffset} so top surface is at y=0`);
+
+      // Dispose of the placeholder ground
+      if (this.ground) {
+        this.ground.dispose();
+        this.ground = gridParent;
+      }
+    })
+    .catch(error => {
+      console.error("Error loading grid model:", error);
+      console.log("Using placeholder ground instead");
+
+      // Fallback: Apply grid material to existing ground
+      try {
+        const gridMaterial = new BABYLON.GridMaterial('gridMat', this.scene);
+        gridMaterial.mainColor = new BABYLON.Color3(0.01, 0.01, 0.01);
+        gridMaterial.lineColor = new BABYLON.Color3(0, 1.0, 1.0);
+        gridMaterial.gridRatio = 1;
+        gridMaterial.majorUnitFrequency = 10;
+        gridMaterial.minorUnitVisibility = 0.6;
+        gridMaterial.opacity = 1.0;
+        this.ground.material = gridMaterial;
+      } catch (fallbackError) {
+        console.error("Fallback grid material also failed:", fallbackError);
+      }
+    });
+  }
+
   setupCamera() {
     // Create follow camera that locks on player's bike - simple setup
     this.camera = new BABYLON.FollowCamera('cam', this.player.node.position.clone(), this.scene);
