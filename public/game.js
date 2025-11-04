@@ -2317,9 +2317,12 @@ class TronGame {
       z: this.player.node.position.z
     });
 
-    // Note: We don't show the popup here anymore - it's handled by the callback
-    // to avoid duplicate popups. The callback (handleGameEventSP in SinglePlayer.js
-    // or handleGameEvent in app.js) will show the popup after a delay.
+    // Show the appropriate game-over UI locally
+    if (!this.singlePlayerMode) {
+      if (typeof window !== 'undefined' && typeof window.showGameOverPopup === 'function') {
+        window.showGameOverPopup(reason);
+      }
+    }
   }
 
   // Properly dispose of the game instance and clean up resources
