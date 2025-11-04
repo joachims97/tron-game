@@ -273,6 +273,9 @@ document.addEventListener('DOMContentLoaded', function() {
 let gameMode = 'none'; // 'none', 'single', or 'multi'
 let soundEnabled = false;
 
+// Background music
+let backgroundMusic = null;
+
 // Initialize on page load
 window.addEventListener('load', initApp);
 
@@ -286,7 +289,13 @@ function initApp() {
   document.getElementById('game-container').style.display = 'none';
   document.getElementById('single-player-menu').style.display = 'none';
   document.getElementById('main-menu').style.display = 'block';
-  
+
+  // Initialize background music
+  backgroundMusic = new Audio('/assets/end_of_line.mp3');
+  backgroundMusic.loop = true;
+  backgroundMusic.volume = 0.5; // Set to 50% volume
+  console.log("Background music initialized");
+
   // Set up main menu event listeners
   document.getElementById('single-player-btn').addEventListener('click', function() {
     gameMode = 'single';
@@ -327,11 +336,20 @@ function initApp() {
 function toggleSound() {
   soundEnabled = !soundEnabled;
   console.log(`Sound ${soundEnabled ? 'enabled' : 'disabled'}`);
-  
+
   const soundButton = document.getElementById('sound-toggle');
   soundButton.textContent = soundEnabled ? 'Sound: ON' : 'Sound: OFF';
-  
-  // Will be implemented in the future with actual sound effects
+
+  // Play or pause background music
+  if (backgroundMusic) {
+    if (soundEnabled) {
+      backgroundMusic.play().catch(error => {
+        console.error("Error playing background music:", error);
+      });
+    } else {
+      backgroundMusic.pause();
+    }
+  }
 }
 
 // Initialize socket connection
