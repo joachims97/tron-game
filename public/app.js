@@ -824,6 +824,18 @@ document.getElementById('lobby-menu-btn')?.addEventListener('click', () => {
   gameMode = 'none';
 });
 
+// Go back to main menu from join container (room entry screen)
+document.getElementById('join-back-to-menu-btn')?.addEventListener('click', () => {
+  console.log("Going to main menu from join container");
+
+  // Hide join container, show main menu
+  document.getElementById('join-container').style.display = 'none';
+  document.getElementById('main-menu').style.display = 'block';
+
+  // Reset game mode
+  gameMode = 'none';
+});
+
 // Create debug button
 window.addEventListener('load', () => {
   if (typeof process !== 'undefined' && process.env.NODE_ENV !== 'production') {
