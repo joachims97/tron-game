@@ -25,7 +25,8 @@ io.on('connection', (socket) => {
       rooms[roomId] = {
         players: {},
         readyCount: 0,
-        restartReadyCount: 0
+        restartReadyCount: 0,
+        matchId: 0
       };
     }
     
@@ -71,8 +72,10 @@ io.on('connection', (socket) => {
     
     // Start game if both players ready
     if (rooms[roomId].readyCount === 2) {
+      rooms[roomId].matchId = (rooms[roomId].matchId || 0) + 1;
       io.to(roomId).emit('game-start', {
-        players: rooms[roomId].players
+        players: rooms[roomId].players,
+        matchId: rooms[roomId].matchId
       });
     }
   });
@@ -140,8 +143,10 @@ io.on('connection', (socket) => {
       rooms[roomId].restartReadyCount = 0;
       
       // Send restart game event
+      rooms[roomId].matchId = (rooms[roomId].matchId || 0) + 1;
       io.to(roomId).emit('restart-game', { 
-        players: rooms[roomId].players 
+        players: rooms[roomId].players,
+        matchId: rooms[roomId].matchId
       });
     }
   });

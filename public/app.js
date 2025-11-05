@@ -22,6 +22,7 @@ let scoreboard = {
 let scoreboardVisible = false;
 let playerDisplayName = 'You';
 let opponentDisplayName = 'Opponent';
+let currentMatchId = null;
 
 // Note: Single player functions (initSinglePlayer, startSinglePlayerGame,
 // initializeGameSP, resizeGameCanvas, handleGameEventSP, etc.) are defined
@@ -166,6 +167,11 @@ function initSocket() {
   
   // Add this inside your initSocket() function, alongside your other socket listeners
   socket.on('game-event', (data) => {
+    if (currentMatchId && data.matchId && data.matchId !== currentMatchId) {
+      console.log('Ignoring game event for stale match', data.matchId, currentMatchId);
+      return;
+    }
+
     console.log('Received game event:', data);
 
     if (data.type === 'gameover') {
@@ -195,15 +201,14 @@ function initSocket() {
   
   // NEW: Handle position updates directly via Socket.io
   socket.on('position-update', (data) => {
+    if (currentMatchId && data.matchId && data.matchId !== currentMatchId) {
+      console.log('Ignoring position update for stale match', data.matchId, currentMatchId);
+      return;
+    }
+
     lastReceivedTime = Date.now();
     if (window.gameInstance) {
-      window.gameInstance.updateOpponentPosition(
-        data.x, 
-        data.z, 
-        data.angle, 
-        data.speed,
-        data.count
-      );
+      window.gameInstance.updateOpponentPosition(data);
     }
   });
   
@@ -287,6 +292,7 @@ function updatePlayerList(players) {
 function startGame(data) {
   console.log("Starting game");
   gameStarted = true;
+  currentMatchId = (data && typeof data.matchId !== 'undefined') ? data.matchId : null;
 
   // Hide lobby UI, show game canvas
   document.getElementById('lobby-container').style.display = 'none';
@@ -336,6 +342,7 @@ function startGame(data) {
 function endGame() {
   console.log("Ending game");
   gameStarted = false;
+  currentMatchId = null;
 
   // Clear position update interval
   if (positionUpdateInterval) {
@@ -399,6 +406,10 @@ function initializeGame(isFirstPlayer) {
       false // Single player mode OFF
     );
   }
+
+  if (window.gameInstance && typeof window.gameInstance.setMatchContext === 'function') {
+    window.gameInstance.setMatchContext(currentMatchId);
+  }
   
   window.gameInstance.start();
 
@@ -412,6 +423,10 @@ function initializeGame(isFirstPlayer) {
 
 // Generic game event handler (for both modes)
 function handleGameEvent(data) {
+  if (gameMode === 'multi') {
+    data.matchId = currentMatchId;
+  }
+
   if (data.type === 'position') {
     // Position updates handled by sendPositionUpdate in multiplayer
     return;
@@ -455,7 +470,8 @@ function sendPositionUpdate() {
     angle: player.angle,
     speed: player.speed,
     count: ++positionUpdateCount,
-    timestamp: Date.now()
+    timestamp: Date.now(),
+    matchId: currentMatchId
   };
   
   socket.emit('position-update', {
@@ -468,6 +484,8 @@ function sendPositionUpdate() {
 // Send game data to other player (multiplayer only)
 function sendGameData(data) {
   if (gameMode !== 'multi') return;
+  
+  data.matchId = currentMatchId;
   
   // Handle different types of messages
   if (data.type === 'position') {

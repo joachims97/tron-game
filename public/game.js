@@ -134,6 +134,17 @@ class TronGame {
       turnValue: 0,
       accelerateValue: 0
     };
+
+    // Match tracking
+    this.matchId = null;
+    this.matchStartTimestamp = 0;
+    this.lastOpponentTimestamp = 0;
+  }
+  
+  setMatchContext(matchId) {
+    this.matchId = matchId ?? null;
+    this.matchStartTimestamp = Date.now();
+    this.lastOpponentTimestamp = 0;
   }
   
   
@@ -1951,6 +1962,9 @@ class TronGame {
     // Handle trails after a brief delay
     if (!this.gameStartTime) {
       this.gameStartTime = Date.now();
+      if (!this.matchStartTimestamp) {
+        this.matchStartTimestamp = this.gameStartTime;
+      }
       this.gameInitialized = true; // Mark game as fully initialized after first frame
       console.log("Game fully initialized, position updates will now be processed");
     } else {
@@ -2226,7 +2240,7 @@ class TronGame {
     }
   }
   
-  updateOpponentPosition(x, z, angle, speed, height = 0, jumping = false) {
+  updateOpponentPosition(update) {
     // Guard against position updates before game is fully initialized
     // This prevents race conditions during restart where updates arrive before first render
     if (!this.gameInitialized) {
@@ -2234,14 +2248,62 @@ class TronGame {
       return;
     }
 
+    let payload = update;
+
+    if (!payload || typeof payload !== 'object') {
+      payload = {
+        x: arguments[0],
+        z: arguments[1],
+        angle: arguments[2],
+        speed: arguments[3],
+        height: arguments[4] || 0,
+        jumping: arguments[5] || false
+      };
+    }
+
+    const {
+      x,
+      z,
+      angle,
+      speed,
+      height = 0,
+      jumping = false,
+      timestamp = null,
+      matchId = null
+    } = payload;
+
+    if (matchId && this.matchId && matchId !== this.matchId) {
+      console.log("Ignoring position update for non-current match", matchId, this.matchId);
+      return;
+    }
+
+    if (
+      typeof x !== 'number' ||
+      typeof z !== 'number' ||
+      typeof angle !== 'number' ||
+      typeof speed !== 'number'
+    ) {
+      console.warn("Invalid opponent position payload", payload);
+      return;
+    }
+
+    const effectiveTimestamp = timestamp || Date.now();
+
+    if (this.lastOpponentTimestamp && effectiveTimestamp <= this.lastOpponentTimestamp) {
+      console.log("Ignoring out-of-order position update", effectiveTimestamp, this.lastOpponentTimestamp);
+      return;
+    }
+
+    this.lastOpponentTimestamp = effectiveTimestamp;
+
     // Store the previous position as the last update
     this.lastOpponentUpdate = {
       position: this.nextOpponentUpdate.position ? this.nextOpponentUpdate.position.clone() : new BABYLON.Vector3(x, height, z),
-      angle: this.nextOpponentUpdate.angle || angle,
-      speed: this.nextOpponentUpdate.speed || speed,
-      timestamp: this.nextOpponentUpdate.timestamp || Date.now(),
-      height: this.nextOpponentUpdate.height || height,
-      jumping: this.nextOpponentUpdate.jumping || jumping
+      angle: this.nextOpponentUpdate.angle ?? angle,
+      speed: this.nextOpponentUpdate.speed ?? speed,
+      timestamp: this.nextOpponentUpdate.timestamp ?? effectiveTimestamp,
+      height: this.nextOpponentUpdate.height ?? height,
+      jumping: this.nextOpponentUpdate.jumping ?? jumping
     };
 
     // Set the next position target
@@ -2249,7 +2311,7 @@ class TronGame {
       position: new BABYLON.Vector3(x, height, z),
       angle: angle,
       speed: speed,
-      timestamp: Date.now(),
+      timestamp: effectiveTimestamp,
       height: height,
       jumping: jumping
     };
@@ -2262,15 +2324,13 @@ class TronGame {
   
   // Handle different types of network messages
   handleNetworkMessage(data) {
+    if (data.matchId && this.matchId && data.matchId !== this.matchId) {
+      console.log("Ignoring network message for non-current match", data.matchId, this.matchId);
+      return;
+    }
+
     if (data.type === 'position') {
-      this.updateOpponentPosition(
-        data.x, 
-        data.z,
-        data.angle,
-        data.speed,
-        data.height || 0,
-        data.jumping || false
-      );
+      this.updateOpponentPosition(data);
     } else if (data.type === 'jump') {
       console.log("Received jump event from opponent");
       this.handleOpponentJump();
@@ -2314,7 +2374,8 @@ class TronGame {
       type: 'gameover',
       reason: reason,
       x: this.player.node.position.x,
-      z: this.player.node.position.z
+      z: this.player.node.position.z,
+      matchId: this.matchId
     });
 
     // Show the appropriate game-over UI locally
