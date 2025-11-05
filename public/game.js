@@ -2083,7 +2083,7 @@ class TronGame {
           const ray = new BABYLON.Ray(opPosition, dir, 3);
           const hit = this.scene.pickWithRay(ray, opCollisionPredicate);
 
-          if (hit.hit && hit.pickedMesh === this.player.trail && !this.gameOver) {
+          if (hit.hit && hit.pickedMesh === this.player.trail && this.player.trailActive && !this.gameOver) {
             this.endGame('Opponent crashed into your trail!', 'opponent-trail-collision');
             return;
           }
@@ -2210,7 +2210,7 @@ class TronGame {
       const ray = new BABYLON.Ray(origin, dir, 3); // 3 units distance check
       const hit = this.scene.pickWithRay(ray, playerCollisionPredicate);
 
-      if (hit.hit && hit.pickedMesh === this.opponent.trail) {
+      if (hit.hit && hit.pickedMesh === this.opponent.trail && this.opponent.trailActive) {
         console.log("Collision detected with opponent trail!");
         this.endGame('You crashed into opponent\'s trail!', 'trail-collision');
         return;
